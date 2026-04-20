@@ -1,0 +1,42 @@
+{
+  "work": {
+    "id": "wrk_demo",
+    "title": "Рабочая тетрадь: квадратные уравнения",
+    "items": [
+      { "order": 1, "kind": "theory", "content_id": "thr_disc" },
+      { "order": 2, "kind": "task", "content_id": "tsk_roots_1" },
+      { "order": 3, "kind": "task", "content_id": "tsk_roots_2" },
+      { "order": 4, "kind": "theory", "content_id": "thr_roots_count" },
+      { "order": 5, "kind": "task", "content_id": "tsk_roots_count" }
+    ]
+  },
+  "theories": [
+    {
+      "id": "thr_disc",
+      "title": "Дискриминант",
+      "latex_body": "Для квадратного уравнения \\[\nax^2 + bx + c = 0, \\qquad a \\neq 0\n\\]\nдискриминант вычисляется по формуле\n\\[\nD = b^2 - 4ac.\n\\]"
+    },
+    {
+      "id": "thr_roots_count",
+      "title": "Число корней",
+      "latex_body": "Если $D > 0$, уравнение имеет два различных корня. Если $D = 0$, уравнение имеет один корень. Если $D < 0$, действительных корней нет."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "tsk_roots_1",
+      "title": "Найдите корни уравнения",
+      "latex_body": "\\[\nx^2 - 5x + 6 = 0.\n\\]"
+    },
+    {
+      "id": "tsk_roots_2",
+      "title": "Найдите корни уравнения",
+      "latex_body": "\\[\nx^2 - 9 = 0.\n\\]"
+    },
+    {
+      "id": "tsk_roots_count",
+      "title": "Определите число действительных корней",
+      "latex_body": "\\[\nx^2 + 4x + 5 = 0.\n\\]"
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package document.v1;
+
+option go_package = "itmo-lms/document-service/gen/document/v1;documentv1";
+
+service DocumentService {
+  rpc CompileDocument(CompileDocumentRequest) returns (DocumentJobReply);
+  rpc GetDocumentJob(GetDocumentJobRequest) returns (DocumentJobReply);
+}
+
+message GetDocumentJobRequest {
+  string job_id = 1;
+}
+
+message CompileDocumentRequest {
+  string title = 1;
+  string format = 2;
+  repeated DocumentTask tasks = 3;
+}
+
+message DocumentTask {
+  string id = 1;
+  string title = 2;
+  string latex_body = 3;
+}
+
+message DocumentFileReply {
+  string id = 1;
+  string job_id = 2;
+  string kind = 3;
+  string storage_key = 4;
+  string mime_type = 5;
+  int64 size = 6;
+  string checksum = 7;
+  string created_at = 8;
+}
+
+message DocumentJobReply {
+  string id = 1;
+  string format = 2;
+  string status = 3;
+  repeated DocumentFileReply files = 4;
+  string error = 5;
+  string created_at = 6;
+  string completed_at = 7;
+}

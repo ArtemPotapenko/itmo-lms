@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package statistic.v1;
+
+option go_package = "itmo-lms/statistic-service/gen/statistic/v1;statisticv1";
+
+service StatisticService {
+  rpc RecordAttempt(RecordAttemptRequest) returns (AttemptReply);
+  rpc GetKnowledgeProfile(GetKnowledgeProfileRequest) returns (KnowledgeProfileReply);
+}
+
+message RecordAttemptRequest {
+  string user_id = 1;
+  string content_id = 2;
+  string answer = 4;
+  bool is_correct = 5;
+  string source = 6;
+}
+
+message GetKnowledgeProfileRequest {
+  string user_id = 1;
+}
+
+message AttemptReply {
+  string id = 1;
+  string user_id = 2;
+  string content_id = 3;
+  repeated string topic_ids = 4;
+  repeated TagStatReply tag_scores = 9;
+  string answer = 5;
+  bool is_correct = 6;
+  string source = 7;
+  string created_at = 8;
+}
+
+message TopicStatReply {
+  string user_id = 1;
+  string topic_id = 2;
+  int32 attempts = 3;
+  int32 correct = 4;
+  double accuracy = 5;
+  string updated_at = 6;
+}
+
+message TagStatReply {
+  string user_id = 1;
+  string tag_id = 2;
+  string code = 3;
+  string name = 4;
+  string kind = 5;
+  double weighted_attempts = 6;
+  double weighted_correct = 7;
+  double mastery = 8;
+  string updated_at = 9;
+}
+
+message KnowledgeProfileReply {
+  string user_id = 1;
+  repeated TopicStatReply topics = 2;
+  repeated TagStatReply tags = 4;
+  string updated_at = 3;
+}

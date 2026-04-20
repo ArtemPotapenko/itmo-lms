@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package auth.v1;
+
+option go_package = "itmo-lms/auth-service/gen/auth/v1;authv1";
+
+service AuthService {
+  rpc GetUser(GetUserRequest) returns (UserReply);
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenReply);
+}
+
+message GetUserRequest {
+  string user_id = 1;
+}
+
+message ValidateTokenRequest {
+  string token = 1;
+}
+
+message UserReply {
+  string id = 1;
+  string phone = 2;
+  string email = 3;
+  string first_name = 4;
+  string last_name = 5;
+  string nick = 6;
+  repeated string roles = 7;
+  string status = 8;
+  string created_at = 9;
+}
+
+message ValidateTokenReply {
+  string user_id = 1;
+  repeated string roles = 2;
+  int64 expires = 3;
+}

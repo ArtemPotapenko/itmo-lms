@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package content.v1;
+
+option go_package = "itmo-lms/content-service/gen/content/v1;contentv1";
+
+service ContentService {
+  rpc GetTask(GetTaskRequest) returns (TaskReply);
+  rpc GetWorkTemplate(GetWorkTemplateRequest) returns (WorkTemplateReply);
+  rpc BuildWorkLatex(BuildWorkLatexRequest) returns (BuildWorkLatexReply);
+}
+
+message GetTaskRequest {
+  string task_id = 1;
+}
+
+message GetWorkTemplateRequest {
+  string work_id = 1;
+}
+
+message BuildWorkLatexRequest {
+  string work_id = 1;
+}
+
+message TaskTagReply {
+  string tag_id = 1;
+  string code = 2;
+  string name = 3;
+  string kind = 4;
+  double weight = 5;
+}
+
+message TaskReply {
+  string id = 1;
+  string title = 2;
+  string latex_body = 3;
+  repeated string topic_ids = 4;
+  repeated TaskTagReply tags = 5;
+  int32 difficulty = 6;
+  string correct_answer = 7;
+  string status = 8;
+  string author_id = 9;
+  string created_at = 10;
+  string updated_at = 11;
+}
+
+message WorkTemplateReply {
+  string id = 1;
+  string title = 2;
+  repeated string task_ids = 3;
+  string status = 4;
+  string created_by = 5;
+  string created_at = 6;
+}
+
+message BuildWorkLatexReply {
+  string work_id = 1;
+  string latex = 2;
+}

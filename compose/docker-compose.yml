@@ -1,0 +1,171 @@
+services:
+  redpanda:
+    image: redpandadata/redpanda:v24.2.10
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  consul:
+    image: hashicorp/consul:1.18
+    command: agent -dev -client=0.0.0.0
+    ports:
+      - "8500:8500"
+
+  auth-service:
+    build:
+      context: ..
+      args:
+        SERVICE: auth-service
+    environment:
+      ADDR: :8081
+      PORT: 8081
+      GRPC_ADDR: :9081
+      SERVICE_HOST: auth-service
+      CONSUL_URL: http://consul:8500
+      JWT_SECRET: dev-secret
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/itmo_lms_auth?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      consul:
+        condition: service_started
+
+  content-service:
+    build:
+      context: ..
+      args:
+        SERVICE: content-service
+    environment:
+      ADDR: :8082
+      PORT: 8082
+      GRPC_ADDR: :9082
+      SERVICE_HOST: content-service
+      CONSUL_URL: http://consul:8500
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/itmo_lms_content?sslmode=disable
+      DOCUMENT_SERVICE_GRPC_ADDR: document-service:9084
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_ATTEMPTS_TOPIC: attempt-events
+    depends_on:
+      postgres:
+        condition: service_healthy
+      consul:
+        condition: service_started
+      document-service:
+        condition: service_started
+      redpanda:
+        condition: service_healthy
+
+  course-service:
+    build:
+      context: ..
+      args:
+        SERVICE: course-service
+    environment:
+      ADDR: :8083
+      PORT: 8083
+      GRPC_ADDR: :9083
+      SERVICE_HOST: course-service
+      CONSUL_URL: http://consul:8500
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/itmo_lms_course?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      consul:
+        condition: service_started
+
+  document-service:
+    build:
+      context: ..
+      args:
+        SERVICE: document-service
+    environment:
+      ADDR: :8084
+      PORT: 8084
+      GRPC_ADDR: :9084
+      SERVICE_HOST: document-service
+      CONSUL_URL: http://consul:8500
+      DATA_DIR: /data/documents
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/itmo_lms_document?sslmode=disable
+    volumes:
+      - documents:/data/documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      consul:
+        condition: service_started
+
+  statistic-service:
+    build:
+      context: ..
+      args:
+        SERVICE: statistic-service
+    environment:
+      ADDR: :8085
+      PORT: 8085
+      GRPC_ADDR: :9085
+      SERVICE_HOST: statistic-service
+      CONSUL_URL: http://consul:8500
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/itmo_lms_statistic?sslmode=disable
+      CONTENT_SERVICE_GRPC_ADDR: content-service:9082
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_ATTEMPTS_TOPIC: attempt-events
+      KAFKA_ATTEMPTS_GROUP: statistic-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      consul:
+        condition: service_started
+      content-service:
+        condition: service_started
+      redpanda:
+        condition: service_healthy
+
+  gateway:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ../gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      auth-service:
+        condition: service_started
+      content-service:
+        condition: service_started
+      course-service:
+        condition: service_started
+      document-service:
+        condition: service_started
+      statistic-service:
+        condition: service_started
+
+volumes:
+  documents:
+  postgres-data:

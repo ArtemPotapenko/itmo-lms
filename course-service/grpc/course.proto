@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package course.v1;
+
+option go_package = "itmo-lms/course-service/gen/course/v1;coursev1";
+
+service CourseService {
+  rpc ListAssignments(ListAssignmentsRequest) returns (ListAssignmentsReply);
+  rpc ListMembers(ListMembersRequest) returns (ListMembersReply);
+  rpc CreateSubmission(CreateSubmissionRequest) returns (SubmissionReply);
+}
+
+message ListAssignmentsRequest {
+  string course_id = 1;
+}
+
+message ListMembersRequest {
+  string course_id = 1;
+}
+
+message CreateSubmissionRequest {
+  string assignment_id = 1;
+  string user_id = 2;
+  repeated SubmissionAnswer answers = 3;
+}
+
+message SubmissionAnswer {
+  string content_id = 1;
+  string answer = 2;
+  bool has_is_correct = 3;
+  bool is_correct = 4;
+}
+
+message AssignmentReply {
+  string id = 1;
+  string course_id = 2;
+  string title = 3;
+  string work_id = 4;
+  repeated string task_ids = 5;
+  string due_at = 6;
+  string assigned_by = 7;
+  string status = 8;
+  string created_at = 9;
+}
+
+message CourseMemberReply {
+  string course_id = 1;
+  string user_id = 2;
+  string role = 3;
+}
+
+message SubmissionReply {
+  string id = 1;
+  string assignment_id = 2;
+  string user_id = 3;
+  repeated SubmissionAnswer answers = 4;
+  string status = 5;
+  string submitted_at = 6;
+}
+
+message ListAssignmentsReply {
+  repeated AssignmentReply items = 1;
+}
+
+message ListMembersReply {
+  repeated CourseMemberReply items = 1;
+}
