@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"time"
@@ -17,10 +18,21 @@ type MetadataProvider interface {
 type Service struct {
 	repo     domain.Repository
 	metadata MetadataProvider
+	cache    Cache
+	cacheTTL time.Duration
 }
 
-func NewService(repo domain.Repository, metadata MetadataProvider) *Service {
-	return &Service{repo: repo, metadata: metadata}
+type Cache interface {
+	Get(context.Context, string) ([]byte, bool, error)
+	SetEX(context.Context, string, time.Duration, []byte) error
+	Delete(context.Context, ...string) error
+}
+
+func NewService(repo domain.Repository, metadata MetadataProvider, cache Cache, cacheTTL time.Duration) *Service {
+	if cacheTTL <= 0 {
+		cacheTTL = 2 * time.Hour
+	}
+	return &Service{repo: repo, metadata: metadata, cache: cache, cacheTTL: cacheTTL}
 }
 
 func (s *Service) CreateAttempt(ctx context.Context, attempt domain.Attempt) (domain.Attempt, error) {
@@ -44,7 +56,11 @@ func (s *Service) CreateAttempt(ctx context.Context, attempt domain.Attempt) (do
 	}
 	attempt.ID = platform.NewID("att")
 	attempt.CreatedAt = time.Now().UTC()
-	return attempt, s.repo.AddAttempt(ctx, attempt)
+	if err := s.repo.AddAttempt(ctx, attempt); err != nil {
+		return domain.Attempt{}, err
+	}
+	s.invalidateCaches(ctx, attempt.UserID, attempt.CourseID)
+	return attempt, nil
 }
 
 func (s *Service) ListAttempts(ctx context.Context, userID string) ([]domain.Attempt, error) {
@@ -52,12 +68,34 @@ func (s *Service) ListAttempts(ctx context.Context, userID string) ([]domain.Att
 }
 
 func (s *Service) Profile(ctx context.Context, userID string) (domain.KnowledgeProfile, error) {
-	return s.repo.Profile(ctx, userID)
+	if userID == "" {
+		return domain.KnowledgeProfile{}, errors.New("user_id is required")
+	}
+	key := "profile:" + userID
+	if cached, ok, err := s.cacheGetJSON(ctx, key); err == nil && ok {
+		var profile domain.KnowledgeProfile
+		if json.Unmarshal(cached, &profile) == nil {
+			return profile, nil
+		}
+	}
+	profile, err := s.repo.Profile(ctx, userID)
+	if err != nil {
+		return domain.KnowledgeProfile{}, err
+	}
+	_ = s.cacheSetJSON(ctx, key, profile)
+	return profile, nil
 }
 
 func (s *Service) CourseCalibration(ctx context.Context, courseID string) (domain.CourseCalibration, error) {
 	if courseID == "" {
 		return domain.CourseCalibration{}, errors.New("course_id is required")
+	}
+	key := "course-calibration:" + courseID
+	if cached, ok, err := s.cacheGetJSON(ctx, key); err == nil && ok {
+		var calibration domain.CourseCalibration
+		if json.Unmarshal(cached, &calibration) == nil {
+			return calibration, nil
+		}
 	}
 	attempts, err := s.repo.ListCourseAttempts(ctx, courseID)
 	if err != nil {
@@ -73,7 +111,9 @@ func (s *Service) CourseCalibration(ctx context.Context, courseID string) (domai
 		byTask[attempt.ContentID] = append(byTask[attempt.ContentID], attempt)
 	}
 	if len(byTask) == 0 {
-		return domain.CourseCalibration{CourseID: courseID, TaskCalibrations: map[string]domain.TaskCalibration{}, UpdatedAt: now}, nil
+		calibration := domain.CourseCalibration{CourseID: courseID, TaskCalibrations: map[string]domain.TaskCalibration{}, UpdatedAt: now}
+		_ = s.cacheSetJSON(ctx, key, calibration)
+		return calibration, nil
 	}
 	averageSuccess := 0.0
 	for taskID, items := range byTask {
@@ -88,6 +128,8 @@ func (s *Service) CourseCalibration(ctx context.Context, courseID string) (domai
 		averageSuccess += rate
 	}
 	averageSuccess /= float64(len(byTask))
+	courseUserTopicRatings := userTopicRatings(attempts)
+	courseUserTagMasteries := userTagMasteries(attempts)
 
 	taskCalibrations := make(map[string]domain.TaskCalibration, len(byTask))
 	for taskID, items := range byTask {
@@ -103,67 +145,98 @@ func (s *Service) CourseCalibration(ctx context.Context, courseID string) (domai
 			CourseAverageRate:   round4(averageSuccess),
 			BaseDifficulty:      baseDifficulty,
 			SuggestedDifficulty: round4(clamp(float64(baseDifficulty)*(1+(averageSuccess-taskSuccessRates[taskID])), 1, 10)),
-			TopicWeights:        calibrationTopicWeights(items),
-			TagWeights:          calibrationTagWeights(items),
+			TopicWeights:        calibrationTopicWeights(items, courseUserTopicRatings),
+			TagWeights:          calibrationTagWeights(items, courseUserTagMasteries),
 		}
 	}
-	return domain.CourseCalibration{CourseID: courseID, TaskCalibrations: taskCalibrations, UpdatedAt: now}, nil
+	calibration := domain.CourseCalibration{CourseID: courseID, TaskCalibrations: taskCalibrations, UpdatedAt: now}
+	_ = s.cacheSetJSON(ctx, key, calibration)
+	return calibration, nil
 }
 
-func calibrationTopicWeights(items []domain.Attempt) []domain.CalibrationWeight {
+func calibrationTopicWeights(items []domain.Attempt, courseUserRatings map[string]map[string]float64) []domain.CalibrationWeight {
 	if len(items) == 0 {
 		return nil
 	}
-	userRatings := userTopicRatings(items)
 	scores := map[string]float64{}
 	for _, topicID := range items[0].TopicIDs {
-		solved := 0.0
-		total := 0.0
+		strongSolved := 0.0
+		strongTotal := 0.0
+		weakSolved := 0.0
+		weakTotal := 0.0
 		for _, attempt := range items {
-			if userRatings[attempt.UserID][topicID] >= 7 {
-				total++
+			if courseUserRatings[attempt.UserID][topicID] >= 7 {
+				strongTotal++
 				if attempt.IsCorrect {
-					solved++
+					strongSolved++
 				}
+				continue
+			}
+			weakTotal++
+			if attempt.IsCorrect {
+				weakSolved++
 			}
 		}
-		if total == 0 {
-			scores[topicID] = 1
-			continue
-		}
-		scores[topicID] = solved / total
+		scores[topicID] = discriminativeScore(strongSolved, strongTotal, weakSolved, weakTotal, 1)
 	}
 	return normalizeScores(scores)
 }
 
-func calibrationTagWeights(items []domain.Attempt) []domain.CalibrationWeight {
+func calibrationTagWeights(items []domain.Attempt, courseUserMastery map[string]map[string]float64) []domain.CalibrationWeight {
 	if len(items) == 0 {
 		return nil
 	}
-	userMastery := userTagMasteries(items)
 	scores := map[string]float64{}
 	for _, tag := range items[0].TagScores {
-		solved := 0.0
-		total := 0.0
+		strongSolved := 0.0
+		strongTotal := 0.0
+		weakSolved := 0.0
+		weakTotal := 0.0
 		for _, attempt := range items {
-			if userMastery[attempt.UserID][tag.TagID] >= 0.65 {
-				total++
+			if courseUserMastery[attempt.UserID][tag.TagID] >= 0.65 {
+				strongTotal++
 				if attempt.IsCorrect {
-					solved++
+					strongSolved++
 				}
+				continue
+			}
+			weakTotal++
+			if attempt.IsCorrect {
+				weakSolved++
 			}
 		}
-		if total == 0 {
-			if tag.Weight > 0 {
-				scores[tag.TagID] = tag.Weight
-			} else {
-				scores[tag.TagID] = 1
-			}
-			continue
+		base := tag.Weight
+		if base <= 0 {
+			base = 1
 		}
-		scores[tag.TagID] = solved / total
+		scores[tag.TagID] = discriminativeScore(strongSolved, strongTotal, weakSolved, weakTotal, base)
 	}
 	return normalizeScores(scores)
+}
+
+func discriminativeScore(strongSolved, strongTotal, weakSolved, weakTotal, baseWeight float64) float64 {
+	const (
+		minScore   = 0.05
+		minSamples = 6.0
+	)
+	if baseWeight <= 0 {
+		baseWeight = 1
+	}
+	strongRate := safeRate(strongSolved, strongTotal)
+	weakRate := safeRate(weakSolved, weakTotal)
+	signal := strongRate - weakRate
+	if signal < 0 {
+		signal = 0
+	}
+	confidence := clamp((strongTotal+weakTotal)/minSamples, 0, 1)
+	return minScore + confidence*signal + (1-confidence)*baseWeight
+}
+
+func safeRate(solved, total float64) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return solved / total
 }
 
 func userTopicRatings(items []domain.Attempt) map[string]map[string]float64 {
@@ -262,4 +335,36 @@ func clamp(value, minValue, maxValue float64) float64 {
 func round4(value float64) float64 {
 	const scale = 10000
 	return float64(int(value*scale+0.5)) / scale
+}
+
+func (s *Service) cacheGetJSON(ctx context.Context, key string) ([]byte, bool, error) {
+	if s.cache == nil {
+		return nil, false, nil
+	}
+	return s.cache.Get(ctx, key)
+}
+
+func (s *Service) cacheSetJSON(ctx context.Context, key string, value any) error {
+	if s.cache == nil {
+		return nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return s.cache.SetEX(ctx, key, s.cacheTTL, raw)
+}
+
+func (s *Service) invalidateCaches(ctx context.Context, userID, courseID string) {
+	if s.cache == nil {
+		return
+	}
+	keys := make([]string, 0, 2)
+	if userID != "" {
+		keys = append(keys, "profile:"+userID)
+	}
+	if courseID != "" {
+		keys = append(keys, "course-calibration:"+courseID)
+	}
+	_ = s.cache.Delete(ctx, keys...)
 }

@@ -15,7 +15,7 @@ import (
 
 func TestAttemptConsumerConsumesEventAndCreatesAttempt(t *testing.T) {
 	repo := &consumerRepo{}
-	service := application.NewService(repo, consumerMetadata{})
+	service := application.NewService(repo, consumerMetadata{}, nil, 0)
 
 	raw, err := json.Marshal(events.AttemptEvaluated{
 		UserID:    "usr_1",
@@ -59,7 +59,7 @@ func TestAttemptConsumerConsumesEventAndCreatesAttempt(t *testing.T) {
 
 func TestAttemptConsumerSkipsInvalidPayloadAndDoesNotCommit(t *testing.T) {
 	repo := &consumerRepo{}
-	service := application.NewService(repo, consumerMetadata{})
+	service := application.NewService(repo, consumerMetadata{}, nil, 0)
 	base := &fakeConsumer{messages: [][]byte{[]byte("{invalid")}}
 
 	consumer := NewAttemptConsumer(base, service)

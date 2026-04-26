@@ -39,6 +39,15 @@ services:
     ports:
       - "8500:8500"
 
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   auth-service:
     build:
       context: ..
@@ -154,6 +163,8 @@ services:
       CONSUL_URL: http://consul:8500
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/itmo_lms_statistic?sslmode=disable
       CONTENT_SERVICE_GRPC_ADDR: content-service:9082
+      REDIS_ADDR: redis:6379
+      STAT_CACHE_TTL: 2h
       KAFKA_BROKERS: redpanda:9092
       KAFKA_ATTEMPTS_TOPIC: attempt-events
       KAFKA_ATTEMPTS_GROUP: statistic-service
@@ -164,6 +175,8 @@ services:
         condition: service_started
       content-service:
         condition: service_started
+      redis:
+        condition: service_healthy
       redpanda:
         condition: service_healthy
 

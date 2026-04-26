@@ -16,7 +16,7 @@ import (
 
 func TestCreateAttemptRequiresAuthAndCreatesAttempt(t *testing.T) {
 	repo := &handlerRepo{}
-	service := application.NewService(repo, handlerMetadata{})
+	service := application.NewService(repo, handlerMetadata{}, nil, 0)
 	handler := New(service, "test-secret")
 	server := httptest.NewServer(handler.Routes())
 	defer server.Close()
@@ -65,7 +65,7 @@ func TestProfileReturnsKnowledgeProfile(t *testing.T) {
 			UpdatedAt: now,
 		},
 	}
-	service := application.NewService(repo, nil)
+	service := application.NewService(repo, nil, nil, 0)
 	handler := New(service, "test-secret")
 	server := httptest.NewServer(handler.Routes())
 	defer server.Close()
@@ -100,7 +100,7 @@ func TestCourseCalibrationEndpointReturnsPayload(t *testing.T) {
 			{ID: "att_2", UserID: "usr_2", CourseID: "crs_1", ContentID: "tsk_1", TopicIDs: []string{"top_1"}, TagScores: []domain.TagScore{{TagID: "tag_1", Weight: 1}}, Difficulty: 3, IsCorrect: false},
 		},
 	}
-	service := application.NewService(repo, nil)
+	service := application.NewService(repo, nil, nil, 0)
 	handler := New(service, "test-secret")
 	server := httptest.NewServer(handler.Routes())
 	defer server.Close()

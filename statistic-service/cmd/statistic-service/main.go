@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
 	"google.golang.org/grpc"
 	basekafka "itmo-lms/pkg/kafka"
 	"itmo-lms/pkg/platform"
 	pg "itmo-lms/pkg/postgres"
+	"itmo-lms/pkg/rediscache"
 	statisticv1 "itmo-lms/statistic-service/gen"
 	"itmo-lms/statistic-service/internal/application"
 	grpcclient "itmo-lms/statistic-service/internal/infrastructure/grpc"
@@ -38,7 +40,17 @@ func main() {
 		}
 		metadata = client
 	}
-	service := application.NewService(infra.NewRepository(db), metadata)
+	var cache application.Cache
+	if addr := platform.Env("REDIS_ADDR", ""); addr != "" {
+		cache = rediscache.New(addr)
+	}
+	cacheTTL := 2 * time.Hour
+	if raw := platform.Env("STAT_CACHE_TTL", "2h"); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+			cacheTTL = parsed
+		}
+	}
+	service := application.NewService(infra.NewRepository(db), metadata, cache, cacheTTL)
 	if brokers := basekafka.BrokersFromEnv(platform.Env("KAFKA_BROKERS", "")); len(brokers) > 0 {
 		consumer := kafkainfra.NewAttemptConsumer(
 			basekafka.NewConsumer(brokers, platform.Env("KAFKA_ATTEMPTS_TOPIC", "attempt-events"), platform.Env("KAFKA_ATTEMPTS_GROUP", "statistic-service")),

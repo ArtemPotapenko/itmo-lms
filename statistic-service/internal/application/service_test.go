@@ -15,7 +15,7 @@ func TestCreateAttemptEnrichesMetadata(t *testing.T) {
 		tags:       []domain.TagScore{{TagID: "tag_1", Code: "disc", Weight: 0.7}},
 		difficulty: 3,
 	}
-	service := NewService(repo, metadata)
+	service := NewService(repo, metadata, nil, 0)
 
 	attempt, err := service.CreateAttempt(context.Background(), domain.Attempt{
 		UserID:    "usr_1",
@@ -58,7 +58,7 @@ func TestProfilePreservesWeightedTagStats(t *testing.T) {
 			UpdatedAt: now,
 		},
 	}
-	service := NewService(repo, nil)
+	service := NewService(repo, nil, nil, 0)
 
 	profile, err := service.Profile(context.Background(), "usr_1")
 	if err != nil {
@@ -76,6 +76,7 @@ func TestProfilePreservesWeightedTagStats(t *testing.T) {
 }
 
 func TestCourseCalibrationBuildsRelativeDifficultyAndWeights(t *testing.T) {
+	cache := &fakeCache{}
 	service := NewService(&fakeStatisticRepo{
 		courseAttempts: []domain.Attempt{
 			{
@@ -104,12 +105,22 @@ func TestCourseCalibrationBuildsRelativeDifficultyAndWeights(t *testing.T) {
 				CourseID:   "crs_1",
 				ContentID:  "tsk_2",
 				TopicIDs:   []string{"top_1"},
-				TagScores:  []domain.TagScore{{TagID: "tag_c", Weight: 1}},
+				TagScores:  []domain.TagScore{{TagID: "tag_a", Weight: 1}},
 				Difficulty: 2,
 				IsCorrect:  true,
 			},
+			{
+				ID:         "att_4",
+				UserID:     "usr_1",
+				CourseID:   "crs_1",
+				ContentID:  "tsk_3",
+				TopicIDs:   []string{"top_2"},
+				TagScores:  []domain.TagScore{{TagID: "tag_b", Weight: 1}},
+				Difficulty: 6,
+				IsCorrect:  false,
+			},
 		},
-	}, nil)
+	}, nil, cache, 2*time.Hour)
 
 	calibration, err := service.CourseCalibration(context.Background(), "crs_1")
 	if err != nil {
@@ -126,6 +137,25 @@ func TestCourseCalibrationBuildsRelativeDifficultyAndWeights(t *testing.T) {
 	if len(task.TopicWeights) != 2 || len(task.TagWeights) != 2 {
 		t.Fatalf("weights = %+v %+v", task.TopicWeights, task.TagWeights)
 	}
+	topicWeights := calibrationWeights(task.TopicWeights)
+	tagWeights := calibrationWeights(task.TagWeights)
+	if topicWeights["top_1"] <= topicWeights["top_2"] {
+		t.Fatalf("expected top_1 weight > top_2, got %+v", task.TopicWeights)
+	}
+	if tagWeights["tag_a"] <= tagWeights["tag_b"] {
+		t.Fatalf("expected tag_a weight > tag_b, got %+v", task.TagWeights)
+	}
+	if _, ok := cache.store["course-calibration:crs_1"]; !ok {
+		t.Fatalf("expected course calibration to be cached")
+	}
+}
+
+func calibrationWeights(items []domain.CalibrationWeight) map[string]float64 {
+	out := make(map[string]float64, len(items))
+	for _, item := range items {
+		out[item.ID] = item.Weight
+	}
+	return out
 }
 
 type fakeMetadataProvider struct {
@@ -142,6 +172,33 @@ type fakeStatisticRepo struct {
 	saved          domain.Attempt
 	profile        domain.KnowledgeProfile
 	courseAttempts []domain.Attempt
+}
+
+type fakeCache struct {
+	store map[string][]byte
+}
+
+func (c *fakeCache) Get(_ context.Context, key string) ([]byte, bool, error) {
+	if c.store == nil {
+		return nil, false, nil
+	}
+	value, ok := c.store[key]
+	return value, ok, nil
+}
+
+func (c *fakeCache) SetEX(_ context.Context, key string, _ time.Duration, value []byte) error {
+	if c.store == nil {
+		c.store = map[string][]byte{}
+	}
+	c.store[key] = value
+	return nil
+}
+
+func (c *fakeCache) Delete(_ context.Context, keys ...string) error {
+	for _, key := range keys {
+		delete(c.store, key)
+	}
+	return nil
 }
 
 func (r *fakeStatisticRepo) AddAttempt(_ context.Context, attempt domain.Attempt) error {
