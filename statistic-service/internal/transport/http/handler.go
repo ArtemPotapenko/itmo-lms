@@ -23,6 +23,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /users/{id}/attempts", platform.RequireAuth(h.secret, http.HandlerFunc(h.listAttempts)))
 	mux.Handle("GET /users/{id}/knowledge-profile", platform.RequireAuth(h.secret, http.HandlerFunc(h.profile)))
 	mux.Handle("GET /courses/{id}/calibration", platform.RequireAuth(h.secret, http.HandlerFunc(h.courseCalibration)))
+	mux.Handle("GET /internal/users/{id}/knowledge-profile", http.HandlerFunc(h.profile))
+	mux.Handle("GET /internal/courses/{id}/calibration", http.HandlerFunc(h.courseCalibration))
 	return mux
 }
 
