@@ -18,16 +18,21 @@ import (
 var ErrNotFound = errors.New("entity not found")
 
 type Service struct {
-	repo     domain.Repository
-	compiler DocumentCompiler
+	repo      domain.Repository
+	compiler  DocumentCompiler
+	evaluator TaskEvaluator
 }
 
 type DocumentCompiler interface {
 	Compile(context.Context, string, []domain.Task) (string, error)
 }
 
-func NewService(repo domain.Repository, compiler DocumentCompiler) *Service {
-	return &Service{repo: repo, compiler: compiler}
+type TaskEvaluator interface {
+	EvaluateTask(context.Context, domain.Task, []domain.Tag, []string) (int, map[string]float64, error)
+}
+
+func NewService(repo domain.Repository, compiler DocumentCompiler, evaluator TaskEvaluator) *Service {
+	return &Service{repo: repo, compiler: compiler, evaluator: evaluator}
 }
 
 func (s *Service) CreateTopic(ctx context.Context, topic domain.Topic) (domain.Topic, error) {
@@ -67,6 +72,8 @@ func (s *Service) CreateTask(ctx context.Context, task domain.Task) (domain.Task
 		return domain.Task{}, errors.New("title and latex_body are required")
 	}
 	totalWeight := 0.0
+	needsAIWeights := false
+	tagRefs := make([]domain.Tag, 0, len(task.Tags))
 	for i := range task.Tags {
 		if task.Tags[i].TagID == "" {
 			return domain.Task{}, errors.New("tag_id is required")
@@ -84,10 +91,53 @@ func (s *Service) CreateTask(ctx context.Context, task domain.Task) (domain.Task
 		task.Tags[i].Code = tag.Code
 		task.Tags[i].Name = tag.Name
 		task.Tags[i].Kind = tag.Kind
+		tagRefs = append(tagRefs, tag)
+		if task.Tags[i].Weight <= 0 {
+			needsAIWeights = true
+			continue
+		}
 		totalWeight += task.Tags[i].Weight
 	}
+	topicTitles, err := s.topicTitles(ctx, task.TopicIDs)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	if (task.Difficulty <= 0 || needsAIWeights) && s.evaluator != nil {
+		difficulty, weights, err := s.evaluator.EvaluateTask(ctx, task, tagRefs, topicTitles)
+		if err != nil {
+			return domain.Task{}, err
+		}
+		if task.Difficulty <= 0 && difficulty > 0 {
+			task.Difficulty = difficulty
+		}
+		for i := range task.Tags {
+			if task.Tags[i].Weight <= 0 {
+				if weight, ok := weights[task.Tags[i].TagID]; ok && weight > 0 {
+					task.Tags[i].Weight = weight
+				}
+			}
+		}
+	}
+	if task.Difficulty <= 0 {
+		task.Difficulty = 1
+	}
+	totalWeight = 0
+	for _, tag := range task.Tags {
+		if tag.Weight > 0 {
+			totalWeight += tag.Weight
+		}
+	}
 	if len(task.Tags) > 0 && totalWeight <= 0 {
-		return domain.Task{}, errors.New("tag weights must be positive")
+		equal := 1.0 / float64(len(task.Tags))
+		for i := range task.Tags {
+			task.Tags[i].Weight = equal
+		}
+		totalWeight = 1
+	}
+	if totalWeight > 0 {
+		for i := range task.Tags {
+			task.Tags[i].Weight = task.Tags[i].Weight / totalWeight
+		}
 	}
 	now := time.Now().UTC()
 	task.ID = platform.NewID("tsk")
@@ -95,6 +145,31 @@ func (s *Service) CreateTask(ctx context.Context, task domain.Task) (domain.Task
 	task.CreatedAt = now
 	task.UpdatedAt = now
 	return task, s.repo.CreateTask(ctx, task)
+}
+
+func (s *Service) CreateTasksInScope(ctx context.Context, scope domain.TaskScope) ([]domain.Task, error) {
+	if len(scope.Tasks) == 0 {
+		return nil, errors.New("tasks are required")
+	}
+	created := make([]domain.Task, 0, len(scope.Tasks))
+	for _, item := range scope.Tasks {
+		task := domain.Task{
+			Title:         item.Title,
+			LatexBody:     item.LatexBody,
+			CorrectAnswer: item.CorrectAnswer,
+			Difficulty:    item.Difficulty,
+			TopicIDs:      uniqueStrings(append(append([]string{}, scope.TopicIDs...), item.TopicIDs...)),
+			Tags:          mergeScopeTags(scope.TagIDs, item.TagIDs, item.Tags),
+			AuthorID:      valueOr(itemAuthor(scope.AuthorID), ""),
+			Status:        scope.Status,
+		}
+		createdTask, err := s.CreateTask(ctx, task)
+		if err != nil {
+			return nil, err
+		}
+		created = append(created, createdTask)
+	}
+	return created, nil
 }
 
 func (s *Service) ListTasks(ctx context.Context, topicID string) ([]domain.Task, error) {
@@ -409,6 +484,81 @@ func normalizeTextAnswer(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.Join(strings.Fields(value), " ")
 	return value
+}
+
+func (s *Service) topicTitles(ctx context.Context, topicIDs []string) ([]string, error) {
+	if len(topicIDs) == 0 {
+		return nil, nil
+	}
+	topics, err := s.repo.ListTopics(ctx)
+	if err != nil {
+		return nil, err
+	}
+	titleByID := make(map[string]string, len(topics))
+	for _, topic := range topics {
+		titleByID[topic.ID] = topic.Title
+	}
+	titles := make([]string, 0, len(topicIDs))
+	for _, topicID := range topicIDs {
+		if title, ok := titleByID[topicID]; ok {
+			titles = append(titles, title)
+		}
+	}
+	return titles, nil
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func mergeScopeTags(scopeTagIDs, itemTagIDs []string, explicit []domain.TaskTag) []domain.TaskTag {
+	out := make([]domain.TaskTag, 0, len(scopeTagIDs)+len(itemTagIDs)+len(explicit))
+	added := map[string]struct{}{}
+	for _, tagID := range append(scopeTagIDs, itemTagIDs...) {
+		if tagID == "" {
+			continue
+		}
+		if _, ok := added[tagID]; ok {
+			continue
+		}
+		added[tagID] = struct{}{}
+		out = append(out, domain.TaskTag{TagID: tagID})
+	}
+	for _, tag := range explicit {
+		if tag.TagID == "" {
+			continue
+		}
+		if _, ok := added[tag.TagID]; ok {
+			for i := range out {
+				if out[i].TagID == tag.TagID {
+					if tag.Weight > 0 {
+						out[i].Weight = tag.Weight
+					}
+					break
+				}
+			}
+			continue
+		}
+		added[tag.TagID] = struct{}{}
+		out = append(out, tag)
+	}
+	return out
+}
+
+func itemAuthor(value string) string {
+	return strings.TrimSpace(value)
 }
 
 func valueOr(value, fallback string) string {

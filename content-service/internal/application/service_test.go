@@ -14,7 +14,7 @@ func TestCreateWorkPopulatesTitlesAndOrder(t *testing.T) {
 	repo.tasks["tsk_1"] = domain.Task{ID: "tsk_1", Title: "Задача на дискриминант", LatexBody: "Solve"}
 	repo.theories["thr_1"] = domain.Theory{ID: "thr_1", Title: "Формула дискриминанта", LatexBody: "D=b^2-4ac"}
 
-	service := NewService(repo, nil)
+	service := NewService(repo, nil, nil)
 
 	work, err := service.CreateWork(context.Background(), domain.WorkTemplate{
 		Title: "Тетрадь 1",
@@ -51,7 +51,7 @@ func TestBuildWorkLatexIncludesTheoryAndTasksInOrder(t *testing.T) {
 	repo.theories["thr_1"] = domain.Theory{ID: "thr_1", Title: "Теория", LatexBody: "D=b^2-4ac"}
 	repo.tasks["tsk_1"] = domain.Task{ID: "tsk_1", Title: "Задача", LatexBody: "x^2-5x+6=0"}
 
-	service := NewService(repo, nil)
+	service := NewService(repo, nil, nil)
 
 	latex, err := service.BuildWorkLatex(context.Background(), "wrk_1")
 	if err != nil {
@@ -83,7 +83,7 @@ func TestCheckWorkAggregatesResults(t *testing.T) {
 	repo.tasks["tsk_1"] = domain.Task{ID: "tsk_1", Title: "Первая", CorrectAnswer: "2,3", TopicIDs: []string{"top_1"}}
 	repo.tasks["tsk_2"] = domain.Task{ID: "tsk_2", Title: "Вторая", CorrectAnswer: "5", TopicIDs: []string{"top_2"}}
 
-	service := NewService(repo, nil)
+	service := NewService(repo, nil, nil)
 	result, err := service.CheckWork(context.Background(), "wrk_1", "usr_1", "workbook", []domain.WorkAnswer{
 		{TaskID: "tsk_1", Answer: "2,3"},
 		{TaskID: "tsk_2", Answer: "7"},
@@ -107,7 +107,7 @@ func TestCheckTaskAcceptsNumericAnswersIgnoringOrderAndFormat(t *testing.T) {
 	repo := newFakeContentRepo()
 	repo.tasks["tsk_1"] = domain.Task{ID: "tsk_1", Title: "Корни", CorrectAnswer: "2,3"}
 
-	service := NewService(repo, nil)
+	service := NewService(repo, nil, nil)
 
 	result, err := service.CheckTask(context.Background(), "tsk_1", "3; 2")
 	if err != nil {
@@ -122,7 +122,7 @@ func TestCheckTaskAcceptsFractionsAndDecimals(t *testing.T) {
 	repo := newFakeContentRepo()
 	repo.tasks["tsk_1"] = domain.Task{ID: "tsk_1", Title: "Дробь", CorrectAnswer: "1/2"}
 
-	service := NewService(repo, nil)
+	service := NewService(repo, nil, nil)
 
 	result, err := service.CheckTask(context.Background(), "tsk_1", "0.5")
 	if err != nil {
@@ -137,7 +137,7 @@ func TestCheckTaskRejectsDifferentNumericAnswer(t *testing.T) {
 	repo := newFakeContentRepo()
 	repo.tasks["tsk_1"] = domain.Task{ID: "tsk_1", Title: "Число", CorrectAnswer: "5"}
 
-	service := NewService(repo, nil)
+	service := NewService(repo, nil, nil)
 
 	result, err := service.CheckTask(context.Background(), "tsk_1", "7")
 	if err != nil {

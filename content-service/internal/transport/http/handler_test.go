@@ -19,7 +19,7 @@ func TestCreateTaskRequiresTeacherRole(t *testing.T) {
 	repo := newHandlerRepo()
 	repo.tags["tag_1"] = domain.Tag{ID: "tag_1", Code: "disc", Name: "Дискриминант", Kind: "skill"}
 
-	handler := New(application.NewService(repo, nil), "test-secret", nil)
+	handler := New(application.NewService(repo, nil, nil), "test-secret", nil)
 	server := httptest.NewServer(handler.Routes())
 	defer server.Close()
 
@@ -50,7 +50,7 @@ func TestCheckTaskPublishesAttemptEvent(t *testing.T) {
 	}
 	publisher := &recordingAttemptPublisher{}
 
-	handler := New(application.NewService(repo, nil), "test-secret", publisher)
+	handler := New(application.NewService(repo, nil, nil), "test-secret", publisher)
 	server := httptest.NewServer(handler.Routes())
 	defer server.Close()
 
@@ -101,7 +101,7 @@ func TestCheckWorkPublishesEventPerTask(t *testing.T) {
 	}
 	publisher := &recordingAttemptPublisher{}
 
-	handler := New(application.NewService(repo, nil), "test-secret", publisher)
+	handler := New(application.NewService(repo, nil, nil), "test-secret", publisher)
 	server := httptest.NewServer(handler.Routes())
 	defer server.Close()
 

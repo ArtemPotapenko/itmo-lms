@@ -21,7 +21,7 @@ func TestWorkbookDocumentBuildStoresPDFArtifact(t *testing.T) {
 	dataDir := t.TempDir()
 
 	compiler := &artifactCompiler{dir: dataDir}
-	service := contentapp.NewService(newE2EContentRepo(), compiler)
+	service := contentapp.NewService(newE2EContentRepo(), compiler, nil)
 
 	server := httptest.NewServer(contenthttp.New(service, secret, nil).Routes())
 	defer server.Close()

@@ -8,6 +8,7 @@ import (
 	contentv1 "itmo-lms/content-service/gen"
 	"itmo-lms/content-service/internal/application"
 	grpcclient "itmo-lms/content-service/internal/infrastructure/grpc"
+	httpclient "itmo-lms/content-service/internal/infrastructure/http"
 	kafkainfra "itmo-lms/content-service/internal/infrastructure/kafka"
 	infra "itmo-lms/content-service/internal/infrastructure/postgres"
 	grpctransport "itmo-lms/content-service/internal/transport/grpc"
@@ -38,7 +39,11 @@ func main() {
 		}
 		compiler = client
 	}
-	service := application.NewService(infra.NewRepository(db), compiler)
+	var evaluator application.TaskEvaluator
+	if target := platform.Env("AI_EVALUATOR_URL", ""); target != "" {
+		evaluator = httpclient.NewAIEvaluatorClient(target)
+	}
+	service := application.NewService(infra.NewRepository(db), compiler, evaluator)
 	if _, err := platform.StartGRPC(platform.Env("GRPC_ADDR", ":9082"), func(server *grpc.Server) {
 		contentv1.RegisterContentServiceServer(server, grpctransport.New(service))
 	}); err != nil {

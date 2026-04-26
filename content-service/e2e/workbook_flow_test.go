@@ -21,7 +21,7 @@ func TestWorkbookSubmissionPublishesAttemptEventsEndToEnd(t *testing.T) {
 	secret := "test-secret"
 	repo := newE2EContentRepo()
 	publisher := &recordingPublisher{}
-	service := contentapp.NewService(repo, nil)
+	service := contentapp.NewService(repo, nil, nil)
 
 	server := httptest.NewServer(contenthttp.New(service, secret, publisher).Routes())
 	defer server.Close()

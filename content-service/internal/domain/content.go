@@ -92,3 +92,21 @@ type TaskCheckResult struct {
 	Answer    string    `json:"answer"`
 	IsCorrect bool      `json:"is_correct"`
 }
+
+type TaskScope struct {
+	TopicIDs []string        `json:"topic_ids"`
+	TagIDs   []string        `json:"tag_ids"`
+	Tasks    []ScopedTaskDef `json:"tasks"`
+	AuthorID string          `json:"author_id,omitempty"`
+	Status   string          `json:"status,omitempty"`
+}
+
+type ScopedTaskDef struct {
+	Title         string    `json:"title"`
+	LatexBody     string    `json:"latex_body"`
+	CorrectAnswer string    `json:"correct_answer,omitempty"`
+	Difficulty    int       `json:"difficulty,omitempty"`
+	TopicIDs      []string  `json:"topic_ids,omitempty"`
+	TagIDs        []string  `json:"tag_ids,omitempty"`
+	Tags          []TaskTag `json:"tags,omitempty"`
+}

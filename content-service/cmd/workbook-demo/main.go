@@ -49,7 +49,7 @@ func main() {
 	}
 	repo.works[demo.Work.ID] = demo.Work
 
-	service := application.NewService(repo, nil)
+	service := application.NewService(repo, nil, nil)
 	latex, err := service.BuildWorkLatex(context.Background(), demo.Work.ID)
 	if err != nil {
 		fail(err)

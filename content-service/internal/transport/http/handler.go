@@ -31,6 +31,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("POST /tags", platform.RequireRoles(h.secret, []string{"teacher", "admin"}, http.HandlerFunc(h.createTag)))
 	mux.HandleFunc("GET /tags", h.listTags)
 	mux.Handle("POST /tasks", platform.RequireRoles(h.secret, []string{"teacher", "admin"}, http.HandlerFunc(h.createTask)))
+	mux.Handle("POST /tasks/scoped", platform.RequireRoles(h.secret, []string{"teacher", "admin"}, http.HandlerFunc(h.createTasksScoped)))
 	mux.HandleFunc("GET /tasks", h.listTasks)
 	mux.HandleFunc("GET /tasks/{id}", h.getTask)
 	mux.Handle("POST /tasks/{id}/check", platform.RequireAuth(h.secret, http.HandlerFunc(h.checkTask)))
@@ -98,9 +99,10 @@ func (h *Handler) getTask(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) checkTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserID string `json:"user_id"`
-		Answer string `json:"answer"`
-		Source string `json:"source"`
+		UserID   string `json:"user_id"`
+		CourseID string `json:"course_id"`
+		Answer   string `json:"answer"`
+		Source   string `json:"source"`
 	}
 	if err := platform.DecodeJSON(r, &req); err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid json")
@@ -108,9 +110,19 @@ func (h *Handler) checkTask(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := h.service.CheckTask(r.Context(), r.PathValue("id"), req.Answer)
 	if err == nil && h.publish != nil && req.UserID != "" {
-		h.publishAttempt(r, req.UserID, r.PathValue("id"), req.Answer, req.Source, item)
+		h.publishAttempt(r, req.UserID, req.CourseID, r.PathValue("id"), req.Answer, req.Source, item)
 	}
 	writeResult(w, item, err)
+}
+
+func (h *Handler) createTasksScoped(w http.ResponseWriter, r *http.Request) {
+	var req domain.TaskScope
+	if err := platform.DecodeJSON(r, &req); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	items, err := h.service.CreateTasksInScope(r.Context(), req)
+	writeResult(w, items, err)
 }
 
 func (h *Handler) createTheory(w http.ResponseWriter, r *http.Request) {
@@ -169,9 +181,10 @@ func (h *Handler) workDocument(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) checkWork(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserID  string              `json:"user_id"`
-		Source  string              `json:"source"`
-		Answers []domain.WorkAnswer `json:"answers"`
+		UserID   string              `json:"user_id"`
+		CourseID string              `json:"course_id"`
+		Source   string              `json:"source"`
+		Answers  []domain.WorkAnswer `json:"answers"`
 	}
 	if err := platform.DecodeJSON(r, &req); err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid json")
@@ -186,6 +199,7 @@ func (h *Handler) checkWork(w http.ResponseWriter, r *http.Request) {
 		for _, item := range result.Results {
 			_ = h.publish.PublishAttempt(r, events.AttemptEvaluated{
 				UserID:    req.UserID,
+				CourseID:  req.CourseID,
 				ContentID: item.TaskID,
 				Answer:    item.Answer,
 				IsCorrect: item.IsCorrect,
@@ -220,10 +234,11 @@ func writeResult(w http.ResponseWriter, value any, err error) {
 	platform.WriteError(w, status, err.Error())
 }
 
-func (h *Handler) publishAttempt(r *http.Request, userID, contentID, answer, source string, item map[string]any) {
+func (h *Handler) publishAttempt(r *http.Request, userID, courseID, contentID, answer, source string, item map[string]any) {
 	isCorrect, _ := item["is_correct"].(bool)
 	_ = h.publish.PublishAttempt(r, events.AttemptEvaluated{
 		UserID:    userID,
+		CourseID:  courseID,
 		ContentID: contentID,
 		Answer:    answer,
 		IsCorrect: isCorrect,

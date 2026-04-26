@@ -2,6 +2,7 @@ package events
 
 type AttemptEvaluated struct {
 	UserID    string `json:"user_id"`
+	CourseID  string `json:"course_id,omitempty"`
 	ContentID string `json:"content_id"`
 	Answer    string `json:"answer"`
 	IsCorrect bool   `json:"is_correct"`
