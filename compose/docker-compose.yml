@@ -71,6 +71,7 @@ services:
       CONSUL_URL: http://consul:8500
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/itmo_lms_content?sslmode=disable
       DOCUMENT_SERVICE_GRPC_ADDR: document-service:9084
+      AI_EVALUATOR_URL: http://ai-evaluator-service:8090
       KAFKA_BROKERS: redpanda:9092
       KAFKA_ATTEMPTS_TOPIC: attempt-events
     depends_on:
@@ -80,8 +81,26 @@ services:
         condition: service_started
       document-service:
         condition: service_started
+      ai-evaluator-service:
+        condition: service_started
       redpanda:
         condition: service_healthy
+
+  ai-evaluator-service:
+    build:
+      context: ../ai-evaluator-service
+    environment:
+      ADDR: :8090
+      PORT: 8090
+      SERVICE_HOST: ai-evaluator-service
+      SERVICE_NAME: ai-evaluator-service
+      CONSUL_URL: http://consul:8500
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen2.5:14b-instruct}
+    depends_on:
+      consul:
+        condition: service_started
 
   course-service:
     build:

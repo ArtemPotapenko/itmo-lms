@@ -85,9 +85,6 @@ func (s *Service) CreateTask(ctx context.Context, task domain.Task) (domain.Task
 		if !ok {
 			return domain.Task{}, fmt.Errorf("unknown tag_id: %s", task.Tags[i].TagID)
 		}
-		if task.Tags[i].Weight <= 0 {
-			return domain.Task{}, fmt.Errorf("weight must be positive for tag_id: %s", task.Tags[i].TagID)
-		}
 		task.Tags[i].Code = tag.Code
 		task.Tags[i].Name = tag.Name
 		task.Tags[i].Kind = tag.Kind

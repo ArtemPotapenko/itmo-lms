@@ -36,6 +36,7 @@
 
 - `auth-service` — пользователи, роли, логин, JWT
 - `content-service` — темы, тэги, задачи, теория, шаблоны работ
+- `ai-evaluator-service` — первичная AI-оценка сложности задач и весов тэгов для математики
 - `course-service` — курсы, участники, назначения, сдачи, проверки
 - `document-service` — сборка LaTeX-документов, хранение job-ов
 - `statistic-service` — попытки, агрегаты по темам и тэгам
@@ -60,6 +61,12 @@
 - `content-service -> document-service`
 - `statistic-service -> content-service`
 - остальные сервисы уже публикуют свои gRPC контракты для расширения
+
+### Internal HTTP
+
+Используется для интеграции Python AI-сервиса:
+
+- `content-service -> ai-evaluator-service`
 
 ### Kafka
 
@@ -91,6 +98,7 @@ docker compose -f compose/docker-compose.yml up --build
 - PostgreSQL
 - Redpanda
 - Consul
+- Python `ai-evaluator-service`
 - все Go-сервисы
 - nginx gateway
 
@@ -103,6 +111,7 @@ docker compose -f compose/docker-compose.yml up --build
 - `course-service`: HTTP `8083`, gRPC `9083`
 - `document-service`: HTTP `8084`, gRPC `9084`
 - `statistic-service`: HTTP `8085`, gRPC `9085`
+- `ai-evaluator-service`: HTTP `8090`
 - `gateway`: `8080`
 - `consul`: `8500`
 
@@ -212,6 +221,33 @@ Response:
 }
 ```
 
+Если `difficulty <= 0` или у части тэгов отсутствуют веса, `content-service` автоматически запрашивает первичную оценку у `ai-evaluator-service`.
+
+#### `POST /content/tasks/scoped`
+
+Массовое создание задач с заранее выбранными темами и общими тэгами.
+
+```json
+{
+  "topic_ids": ["top_xxx"],
+  "tag_ids": ["tag_xxx"],
+  "author_id": "usr_teacher",
+  "status": "published",
+  "tasks": [
+    {
+      "title": "Решить уравнение",
+      "latex_body": "Решите $x^2-5x+6=0$.",
+      "correct_answer": "2,3"
+    },
+    {
+      "title": "Определить число корней",
+      "latex_body": "Сколько действительных корней имеет $x^2+4x+5=0$?",
+      "tag_ids": ["tag_yyy"]
+    }
+  ]
+}
+```
+
 #### `GET /content/tasks?topic_id=<topic_id>`
 
 #### `GET /content/tasks/{id}`
@@ -223,6 +259,7 @@ Response:
 ```json
 {
   "user_id": "usr_student",
+  "course_id": "crs_xxx",
   "answer": "2,3",
   "source": "practice"
 }
@@ -307,6 +344,7 @@ Response:
 ```json
 {
   "user_id": "usr_student",
+  "course_id": "crs_xxx",
   "source": "workbook",
   "answers": [
     {
@@ -473,6 +511,7 @@ Response:
 ```json
 {
   "user_id": "usr_student",
+  "course_id": "crs_xxx",
   "content_id": "tsk_xxx",
   "answer": "2,3",
   "is_correct": true,
@@ -489,6 +528,16 @@ Response содержит два агрегата:
 - `topics`
 - `tags`
 
+#### `GET /statistics/courses/{id}/calibration`
+
+Возвращает относительную course-aware калибровку задач:
+
+- `suggested_difficulty`
+- `success_rate`
+- `course_average_rate`
+- `topic_weights`
+- `tag_weights`
+
 ## Как считается статистика
 
 ### Topic
@@ -504,7 +553,10 @@ Response содержит два агрегата:
 
 - `attempts += 1`
 - `correct += 1`, если ответ верный
+- `weighted_attempts += difficulty`
+- `weighted_correct += difficulty`, если ответ верный
 - `accuracy = correct / attempts`
+- `rating = 10 * weighted_correct / weighted_attempts`
 
 ### Tag
 
@@ -529,6 +581,14 @@ Response содержит два агрегата:
 
 - `topic` отвечает за логику LMS
 - `tag` отвечает за профиль навыков
+
+### Course-aware recalibration
+
+Для каждой задачи внутри курса `statistic-service` дополнительно считает относительную калибровку:
+
+- если задачу решают хуже среднего по курсу, рекомендованная сложность растет
+- если задачу стабильно решают студенты с высоким рейтингом по теме, вес этой темы внутри задачи растет
+- аналогично пересчитываются веса тэгов
 
 ## Схема БД
 
@@ -652,9 +712,11 @@ Response содержит два агрегата:
 - `attempts`
   - `id`
   - `user_id`
+  - `course_id`
   - `content_id`
   - `topic_ids`
   - `tag_scores`
+  - `difficulty`
   - `answer`
   - `is_correct`
   - `source`

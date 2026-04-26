@@ -148,12 +148,87 @@ func TestCheckTaskRejectsDifferentNumericAnswer(t *testing.T) {
 	}
 }
 
+func TestCreateTaskUsesEvaluatorForDifficultyAndWeights(t *testing.T) {
+	repo := newFakeContentRepo()
+	repo.tags["tag_1"] = domain.Tag{ID: "tag_1", Code: "disc", Name: "Дискриминант", Kind: "skill"}
+	service := NewService(repo, nil, fakeEvaluator{
+		difficulty: 4,
+		weights:    map[string]float64{"tag_1": 1},
+	})
+
+	task, err := service.CreateTask(context.Background(), domain.Task{
+		Title:         "Решить квадратное уравнение",
+		LatexBody:     "x^2-5x+6=0",
+		TopicIDs:      []string{"top_1"},
+		Tags:          []domain.TaskTag{{TagID: "tag_1"}},
+		CorrectAnswer: "2,3",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	if task.Difficulty != 4 {
+		t.Fatalf("difficulty = %d, want 4", task.Difficulty)
+	}
+	if len(task.Tags) != 1 || task.Tags[0].Weight != 1 {
+		t.Fatalf("tags = %+v", task.Tags)
+	}
+}
+
+func TestCreateTasksInScopeMergesTopicsAndTags(t *testing.T) {
+	repo := newFakeContentRepo()
+	repo.tags["tag_common"] = domain.Tag{ID: "tag_common", Code: "common", Name: "Общий", Kind: "skill"}
+	repo.tags["tag_extra"] = domain.Tag{ID: "tag_extra", Code: "extra", Name: "Доп", Kind: "skill"}
+	service := NewService(repo, nil, fakeEvaluator{
+		difficulty: 3,
+		weights: map[string]float64{
+			"tag_common": 0.7,
+			"tag_extra":  0.3,
+		},
+	})
+
+	items, err := service.CreateTasksInScope(context.Background(), domain.TaskScope{
+		TopicIDs: []string{"top_1"},
+		TagIDs:   []string{"tag_common"},
+		Tasks: []domain.ScopedTaskDef{
+			{
+				Title:         "Задача",
+				LatexBody:     "x^2-9=0",
+				CorrectAnswer: "3,-3",
+				TagIDs:        []string{"tag_extra"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTasksInScope() error = %v", err)
+	}
+
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	if len(items[0].TopicIDs) != 1 || items[0].TopicIDs[0] != "top_1" {
+		t.Fatalf("topic ids = %+v", items[0].TopicIDs)
+	}
+	if len(items[0].Tags) != 2 {
+		t.Fatalf("tags = %+v", items[0].Tags)
+	}
+}
+
 type fakeContentRepo struct {
 	topics   map[string]domain.Topic
 	tags     map[string]domain.Tag
 	tasks    map[string]domain.Task
 	theories map[string]domain.Theory
 	works    map[string]domain.WorkTemplate
+}
+
+type fakeEvaluator struct {
+	difficulty int
+	weights    map[string]float64
+}
+
+func (f fakeEvaluator) EvaluateTask(context.Context, domain.Task, []domain.Tag, []string) (int, map[string]float64, error) {
+	return f.difficulty, f.weights, nil
 }
 
 func newFakeContentRepo() *fakeContentRepo {
