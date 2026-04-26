@@ -19,6 +19,7 @@ func TestAttemptConsumerConsumesEventAndCreatesAttempt(t *testing.T) {
 
 	raw, err := json.Marshal(events.AttemptEvaluated{
 		UserID:    "usr_1",
+		CourseID:  "crs_1",
 		ContentID: "tsk_1",
 		Answer:    "2,3",
 		IsCorrect: true,
@@ -44,6 +45,9 @@ func TestAttemptConsumerConsumesEventAndCreatesAttempt(t *testing.T) {
 	attempt := attempts[0]
 	if attempt.UserID != "usr_1" || attempt.ContentID != "tsk_1" || attempt.Source != "workbook" || !attempt.IsCorrect {
 		t.Fatalf("attempt = %+v", attempt)
+	}
+	if attempt.CourseID != "crs_1" {
+		t.Fatalf("course id = %q, want crs_1", attempt.CourseID)
 	}
 	if len(attempt.TopicIDs) != 1 || attempt.TopicIDs[0] != "top_1" {
 		t.Fatalf("attempt topic ids = %+v", attempt.TopicIDs)
@@ -111,6 +115,18 @@ func (r *consumerRepo) ListAttempts(_ context.Context, _ string) ([]domain.Attem
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]domain.Attempt(nil), r.attempts...), nil
+}
+
+func (r *consumerRepo) ListCourseAttempts(_ context.Context, courseID string) ([]domain.Attempt, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]domain.Attempt, 0)
+	for _, attempt := range r.attempts {
+		if attempt.CourseID == courseID {
+			out = append(out, attempt)
+		}
+	}
+	return out, nil
 }
 
 func (r *consumerRepo) Profile(context.Context, string) (domain.KnowledgeProfile, error) {

@@ -30,6 +30,7 @@ func (c *AttemptConsumer) Consume(ctx context.Context) error {
 		}
 		_, err := c.service.CreateAttempt(ctx, domain.Attempt{
 			UserID:    event.UserID,
+			CourseID:  event.CourseID,
 			ContentID: event.ContentID,
 			Answer:    event.Answer,
 			IsCorrect: event.IsCorrect,

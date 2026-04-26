@@ -14,13 +14,13 @@ type Repository struct{ db *sql.DB }
 func NewRepository(db *sql.DB) *Repository { return &Repository{db: db} }
 
 func (r *Repository) AddAttempt(ctx context.Context, attempt domain.Attempt) error {
-	_, err := r.db.ExecContext(ctx, `insert into attempts(id, user_id, content_id, topic_ids, tag_scores, difficulty, answer, is_correct, source, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		attempt.ID, attempt.UserID, attempt.ContentID, postgres.Marshal(attempt.TopicIDs), postgres.Marshal(attempt.TagScores), attempt.Difficulty, attempt.Answer, attempt.IsCorrect, attempt.Source, attempt.CreatedAt)
+	_, err := r.db.ExecContext(ctx, `insert into attempts(id, user_id, course_id, content_id, topic_ids, tag_scores, difficulty, answer, is_correct, source, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		attempt.ID, attempt.UserID, attempt.CourseID, attempt.ContentID, postgres.Marshal(attempt.TopicIDs), postgres.Marshal(attempt.TagScores), attempt.Difficulty, attempt.Answer, attempt.IsCorrect, attempt.Source, attempt.CreatedAt)
 	return err
 }
 
 func (r *Repository) ListAttempts(ctx context.Context, userID string) ([]domain.Attempt, error) {
-	rows, err := r.db.QueryContext(ctx, `select id, user_id, content_id, topic_ids, tag_scores, difficulty, answer, is_correct, source, created_at from attempts where user_id=$1 order by created_at`, userID)
+	rows, err := r.db.QueryContext(ctx, `select id, user_id, course_id, content_id, topic_ids, tag_scores, difficulty, answer, is_correct, source, created_at from attempts where user_id=$1 order by created_at`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +29,27 @@ func (r *Repository) ListAttempts(ctx context.Context, userID string) ([]domain.
 	for rows.Next() {
 		var item domain.Attempt
 		var topicRaw, tagRaw []byte
-		if err := rows.Scan(&item.ID, &item.UserID, &item.ContentID, &topicRaw, &tagRaw, &item.Difficulty, &item.Answer, &item.IsCorrect, &item.Source, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.UserID, &item.CourseID, &item.ContentID, &topicRaw, &tagRaw, &item.Difficulty, &item.Answer, &item.IsCorrect, &item.Source, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		item.TopicIDs = postgres.Unmarshal[[]string](topicRaw)
+		item.TagScores = postgres.Unmarshal[[]domain.TagScore](tagRaw)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) ListCourseAttempts(ctx context.Context, courseID string) ([]domain.Attempt, error) {
+	rows, err := r.db.QueryContext(ctx, `select id, user_id, course_id, content_id, topic_ids, tag_scores, difficulty, answer, is_correct, source, created_at from attempts where course_id=$1 order by created_at`, courseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []domain.Attempt
+	for rows.Next() {
+		var item domain.Attempt
+		var topicRaw, tagRaw []byte
+		if err := rows.Scan(&item.ID, &item.UserID, &item.CourseID, &item.ContentID, &topicRaw, &tagRaw, &item.Difficulty, &item.Answer, &item.IsCorrect, &item.Source, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		item.TopicIDs = postgres.Unmarshal[[]string](topicRaw)

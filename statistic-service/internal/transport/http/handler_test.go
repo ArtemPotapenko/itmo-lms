@@ -93,6 +93,41 @@ func TestProfileReturnsKnowledgeProfile(t *testing.T) {
 	}
 }
 
+func TestCourseCalibrationEndpointReturnsPayload(t *testing.T) {
+	repo := &handlerRepo{
+		courseAttempts: []domain.Attempt{
+			{ID: "att_1", UserID: "usr_1", CourseID: "crs_1", ContentID: "tsk_1", TopicIDs: []string{"top_1"}, TagScores: []domain.TagScore{{TagID: "tag_1", Weight: 1}}, Difficulty: 3, IsCorrect: true},
+			{ID: "att_2", UserID: "usr_2", CourseID: "crs_1", ContentID: "tsk_1", TopicIDs: []string{"top_1"}, TagScores: []domain.TagScore{{TagID: "tag_1", Weight: 1}}, Difficulty: 3, IsCorrect: false},
+		},
+	}
+	service := application.NewService(repo, nil)
+	handler := New(service, "test-secret")
+	server := httptest.NewServer(handler.Routes())
+	defer server.Close()
+
+	token := mustStatToken(t, "test-secret", "usr_1", []string{"teacher"})
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/courses/crs_1/calibration", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var decoded domain.CourseCalibration
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		t.Fatalf("decode calibration: %v", err)
+	}
+	if decoded.CourseID != "crs_1" || decoded.TaskCalibrations["tsk_1"].AttemptCount != 2 {
+		t.Fatalf("decoded calibration = %+v", decoded)
+	}
+}
+
 func mustStatToken(t *testing.T, secret, sub string, roles []string) string {
 	t.Helper()
 	token, err := platform.SignToken(secret, platform.Claims{Subject: sub, Roles: roles, Expires: time.Now().Add(time.Hour).Unix()})
@@ -130,8 +165,9 @@ func (handlerMetadata) ResolveTask(context.Context, string) ([]string, []domain.
 }
 
 type handlerRepo struct {
-	attempts []domain.Attempt
-	profile  domain.KnowledgeProfile
+	attempts       []domain.Attempt
+	profile        domain.KnowledgeProfile
+	courseAttempts []domain.Attempt
 }
 
 func (r *handlerRepo) AddAttempt(_ context.Context, attempt domain.Attempt) error {
@@ -141,6 +177,10 @@ func (r *handlerRepo) AddAttempt(_ context.Context, attempt domain.Attempt) erro
 
 func (r *handlerRepo) ListAttempts(_ context.Context, _ string) ([]domain.Attempt, error) {
 	return r.attempts, nil
+}
+
+func (r *handlerRepo) ListCourseAttempts(_ context.Context, _ string) ([]domain.Attempt, error) {
+	return r.courseAttempts, nil
 }
 
 func (r *handlerRepo) Profile(_ context.Context, _ string) (domain.KnowledgeProfile, error) {

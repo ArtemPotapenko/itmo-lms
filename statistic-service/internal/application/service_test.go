@@ -75,6 +75,59 @@ func TestProfilePreservesWeightedTagStats(t *testing.T) {
 	}
 }
 
+func TestCourseCalibrationBuildsRelativeDifficultyAndWeights(t *testing.T) {
+	service := NewService(&fakeStatisticRepo{
+		courseAttempts: []domain.Attempt{
+			{
+				ID:         "att_1",
+				UserID:     "usr_1",
+				CourseID:   "crs_1",
+				ContentID:  "tsk_1",
+				TopicIDs:   []string{"top_1", "top_2"},
+				TagScores:  []domain.TagScore{{TagID: "tag_a", Weight: 0.7}, {TagID: "tag_b", Weight: 0.3}},
+				Difficulty: 4,
+				IsCorrect:  true,
+			},
+			{
+				ID:         "att_2",
+				UserID:     "usr_2",
+				CourseID:   "crs_1",
+				ContentID:  "tsk_1",
+				TopicIDs:   []string{"top_1", "top_2"},
+				TagScores:  []domain.TagScore{{TagID: "tag_a", Weight: 0.7}, {TagID: "tag_b", Weight: 0.3}},
+				Difficulty: 4,
+				IsCorrect:  false,
+			},
+			{
+				ID:         "att_3",
+				UserID:     "usr_1",
+				CourseID:   "crs_1",
+				ContentID:  "tsk_2",
+				TopicIDs:   []string{"top_1"},
+				TagScores:  []domain.TagScore{{TagID: "tag_c", Weight: 1}},
+				Difficulty: 2,
+				IsCorrect:  true,
+			},
+		},
+	}, nil)
+
+	calibration, err := service.CourseCalibration(context.Background(), "crs_1")
+	if err != nil {
+		t.Fatalf("CourseCalibration() error = %v", err)
+	}
+
+	task := calibration.TaskCalibrations["tsk_1"]
+	if task.AttemptCount != 2 {
+		t.Fatalf("attempt count = %d, want 2", task.AttemptCount)
+	}
+	if task.SuggestedDifficulty <= 0 || task.SuggestedDifficulty > 10 {
+		t.Fatalf("suggested difficulty = %v", task.SuggestedDifficulty)
+	}
+	if len(task.TopicWeights) != 2 || len(task.TagWeights) != 2 {
+		t.Fatalf("weights = %+v %+v", task.TopicWeights, task.TagWeights)
+	}
+}
+
 type fakeMetadataProvider struct {
 	topics     []string
 	tags       []domain.TagScore
@@ -86,8 +139,9 @@ func (f fakeMetadataProvider) ResolveTask(context.Context, string) ([]string, []
 }
 
 type fakeStatisticRepo struct {
-	saved   domain.Attempt
-	profile domain.KnowledgeProfile
+	saved          domain.Attempt
+	profile        domain.KnowledgeProfile
+	courseAttempts []domain.Attempt
 }
 
 func (r *fakeStatisticRepo) AddAttempt(_ context.Context, attempt domain.Attempt) error {
@@ -97,6 +151,10 @@ func (r *fakeStatisticRepo) AddAttempt(_ context.Context, attempt domain.Attempt
 
 func (r *fakeStatisticRepo) ListAttempts(_ context.Context, _ string) ([]domain.Attempt, error) {
 	return nil, nil
+}
+
+func (r *fakeStatisticRepo) ListCourseAttempts(_ context.Context, _ string) ([]domain.Attempt, error) {
+	return r.courseAttempts, nil
 }
 
 func (r *fakeStatisticRepo) Profile(_ context.Context, _ string) (domain.KnowledgeProfile, error) {

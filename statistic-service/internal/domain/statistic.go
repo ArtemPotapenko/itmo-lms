@@ -5,6 +5,7 @@ import "time"
 type Attempt struct {
 	ID         string     `json:"id"`
 	UserID     string     `json:"user_id"`
+	CourseID   string     `json:"course_id,omitempty"`
 	ContentID  string     `json:"content_id"`
 	TopicIDs   []string   `json:"topic_ids"`
 	TagScores  []TagScore `json:"tag_scores"`
@@ -52,4 +53,27 @@ type KnowledgeProfile struct {
 	Topics    map[string]TopicStat `json:"topics"`
 	Tags      map[string]TagStat   `json:"tags"`
 	UpdatedAt time.Time            `json:"updated_at"`
+}
+
+type CourseCalibration struct {
+	CourseID         string                     `json:"course_id"`
+	TaskCalibrations map[string]TaskCalibration `json:"task_calibrations"`
+	UpdatedAt        time.Time                  `json:"updated_at"`
+}
+
+type TaskCalibration struct {
+	CourseID            string              `json:"course_id"`
+	ContentID           string              `json:"content_id"`
+	AttemptCount        int                 `json:"attempt_count"`
+	SuccessRate         float64             `json:"success_rate"`
+	CourseAverageRate   float64             `json:"course_average_rate"`
+	BaseDifficulty      int                 `json:"base_difficulty"`
+	SuggestedDifficulty float64             `json:"suggested_difficulty"`
+	TopicWeights        []CalibrationWeight `json:"topic_weights"`
+	TagWeights          []CalibrationWeight `json:"tag_weights"`
+}
+
+type CalibrationWeight struct {
+	ID     string  `json:"id"`
+	Weight float64 `json:"weight"`
 }

@@ -22,6 +22,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("POST /attempts", platform.RequireRoles(h.secret, []string{"student", "teacher", "admin"}, http.HandlerFunc(h.createAttempt)))
 	mux.Handle("GET /users/{id}/attempts", platform.RequireAuth(h.secret, http.HandlerFunc(h.listAttempts)))
 	mux.Handle("GET /users/{id}/knowledge-profile", platform.RequireAuth(h.secret, http.HandlerFunc(h.profile)))
+	mux.Handle("GET /courses/{id}/calibration", platform.RequireAuth(h.secret, http.HandlerFunc(h.courseCalibration)))
 	return mux
 }
 
@@ -52,6 +53,15 @@ func (h *Handler) profile(w http.ResponseWriter, r *http.Request) {
 	item, err := h.service.Profile(r.Context(), r.PathValue("id"))
 	if err != nil {
 		platform.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	platform.WriteJSON(w, http.StatusOK, item)
+}
+
+func (h *Handler) courseCalibration(w http.ResponseWriter, r *http.Request) {
+	item, err := h.service.CourseCalibration(r.Context(), r.PathValue("id"))
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	platform.WriteJSON(w, http.StatusOK, item)

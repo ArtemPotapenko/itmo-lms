@@ -25,8 +25,8 @@ func TestRepository_ProfileAggregatesTopicsAndTags(t *testing.T) {
 	now := time.Now().UTC()
 
 	attempts := []domain.Attempt{
-		{ID: "att_1", UserID: "usr_1", ContentID: "tsk_1", TopicIDs: []string{"top_1"}, TagScores: []domain.TagScore{{TagID: "tag_1", Code: "disc", Weight: 0.6}}, Difficulty: 3, Answer: "2,3", IsCorrect: true, Source: "practice", CreatedAt: now},
-		{ID: "att_2", UserID: "usr_1", ContentID: "tsk_2", TopicIDs: []string{"top_1"}, TagScores: []domain.TagScore{{TagID: "tag_1", Code: "disc", Weight: 0.4}}, Difficulty: 1, Answer: "7", IsCorrect: false, Source: "practice", CreatedAt: now.Add(time.Second)},
+		{ID: "att_1", UserID: "usr_1", CourseID: "crs_1", ContentID: "tsk_1", TopicIDs: []string{"top_1"}, TagScores: []domain.TagScore{{TagID: "tag_1", Code: "disc", Weight: 0.6}}, Difficulty: 3, Answer: "2,3", IsCorrect: true, Source: "practice", CreatedAt: now},
+		{ID: "att_2", UserID: "usr_1", CourseID: "crs_1", ContentID: "tsk_2", TopicIDs: []string{"top_1"}, TagScores: []domain.TagScore{{TagID: "tag_1", Code: "disc", Weight: 0.4}}, Difficulty: 1, Answer: "7", IsCorrect: false, Source: "practice", CreatedAt: now.Add(time.Second)},
 	}
 	for _, attempt := range attempts {
 		if err := repo.AddAttempt(ctx, attempt); err != nil {
@@ -59,5 +59,13 @@ func TestRepository_ProfileAggregatesTopicsAndTags(t *testing.T) {
 	}
 	if got := profile.Tags["tag_1"].Mastery; got != 0.6 {
 		t.Fatalf("mastery = %v, want 0.6", got)
+	}
+
+	courseAttempts, err := repo.ListCourseAttempts(ctx, "crs_1")
+	if err != nil {
+		t.Fatalf("list course attempts: %v", err)
+	}
+	if len(courseAttempts) != 2 {
+		t.Fatalf("course attempts = %d, want 2", len(courseAttempts))
 	}
 }
