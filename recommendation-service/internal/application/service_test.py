@@ -3,7 +3,8 @@ from __future__ import annotations
 import unittest
 
 from internal.application.service import RecommendationService
-from internal.domain.models import RecommendationRequest
+from internal.domain.models import RecommendationRequest, SubjectTagValue
+from internal.infrastructure.memory_repository import InMemoryRecommendationRepository
 
 
 class FakeContent:
@@ -97,11 +98,23 @@ class FakeStatistics:
 
 class RecommendationServiceTest(unittest.TestCase):
     def test_build_workbook_prefers_tasks_close_to_weak_tags(self) -> None:
-        service = RecommendationService(FakeContent(), FakeStatistics())
+        repository = InMemoryRecommendationRepository()
+        repository.upsert_subject_profile(
+            "math",
+            [
+                SubjectTagValue("tag_disc", "disc", "Дискриминант", "skill", 1.6, [], ["top_quad"]),
+                SubjectTagValue("tag_roots", "roots", "Корни", "skill", 1.2, [], ["top_quad"]),
+                SubjectTagValue("tag_linear", "linear", "Линейные", "skill", 0.5, [], ["top_lin"]),
+            ],
+        )
+        service = RecommendationService(FakeContent(), FakeStatistics(), repository)
 
-        result = service.build_workbook(RecommendationRequest(user_id="usr_1", course_id="crs_1", max_tasks=2))
+        result = service.build_workbook(
+            RecommendationRequest(user_id="usr_1", subject="math", course_id="crs_1", max_tasks=2)
+        )
 
         self.assertEqual("usr_1", result.user_id)
+        self.assertEqual("math", result.subject)
         self.assertEqual(2, len(result.selected_tasks))
         self.assertEqual("top_quad", result.selected_tasks[0].topic_ids[0])
         self.assertEqual("thr_quad", result.selected_theory[0].id)
@@ -109,12 +122,27 @@ class RecommendationServiceTest(unittest.TestCase):
         self.assertEqual("task", result.workbook.items[1].kind)
         self.assertIn("Дискриминант", result.workbook.latex)
         self.assertGreater(result.weak_tags[0].score, result.weak_tags[-1].score)
+        self.assertEqual(1, len(repository.list_vectors("usr_1", "math", 10)))
 
     def test_build_workbook_requires_user_id(self) -> None:
-        service = RecommendationService(FakeContent(), FakeStatistics())
+        service = RecommendationService(FakeContent(), FakeStatistics(), InMemoryRecommendationRepository())
 
         with self.assertRaisesRegex(ValueError, "user_id is required"):
             service.build_workbook(RecommendationRequest(user_id=""))
+
+    def test_update_subject_tags_persists_values(self) -> None:
+        repository = InMemoryRecommendationRepository()
+        service = RecommendationService(FakeContent(), FakeStatistics(), repository)
+
+        items = service.update_subject_tags(
+            "physics",
+            [{"tag_id": "tag_vectors", "name": "Векторы", "kind": "skill", "prior_weight": 1.4}],
+        )
+
+        stored = service.get_subject_tags("physics")
+        self.assertEqual(1.4, items[0].prior_weight)
+        self.assertEqual("tag_vectors", stored[0].tag_id)
+        self.assertEqual("tag_vectors", repository.get_subject_profile("physics")[0].tag_id)
 
 
 if __name__ == "__main__":

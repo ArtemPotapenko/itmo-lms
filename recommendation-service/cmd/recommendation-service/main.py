@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from internal.application.service import RecommendationService
 from internal.infrastructure.content_client import ContentClient
+from internal.infrastructure.memory_repository import InMemoryRecommendationRepository
 from internal.infrastructure.statistic_client import StatisticClient
 from internal.transport.http.server import serve
 
@@ -50,8 +51,18 @@ def main() -> None:
     addr = os.environ.get("ADDR", ":8091")
     content_client = ContentClient(os.environ.get("CONTENT_SERVICE_URL", "http://content-service:8082"))
     statistic_client = StatisticClient(os.environ.get("STATISTIC_SERVICE_URL", "http://statistic-service:8085"))
-    service = RecommendationService(content_client, statistic_client)
+    repository = build_repository()
+    service = RecommendationService(content_client, statistic_client, repository)
     serve(addr, service)
+
+
+def build_repository() -> object:
+    mongo_url = os.environ.get("MONGO_URL", "").strip()
+    if not mongo_url:
+        return InMemoryRecommendationRepository()
+    from internal.infrastructure.mongo_repository import MongoRecommendationRepository
+
+    return MongoRecommendationRepository(mongo_url, os.environ.get("MONGO_DB", "itmo_lms_recommendation"))
 
 
 if __name__ == "__main__":

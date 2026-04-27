@@ -11,6 +11,8 @@ from ..domain.models import (
     RecommendedTask,
     RecommendedTheory,
     RecommendedWorkbook,
+    StoredTagVector,
+    SubjectTagValue,
     TagVectorEntry,
     WorkbookItem,
 )
@@ -28,10 +30,20 @@ class StatisticProvider(Protocol):
     def get_course_calibration(self, course_id: str) -> dict: ...
 
 
+class RecommendationRepository(Protocol):
+    def get_subject_profile(self, subject: str) -> List[SubjectTagValue]: ...
+    def upsert_subject_profile(self, subject: str, tags: List[SubjectTagValue]) -> None: ...
+    def store_vector(self, vector: StoredTagVector) -> None: ...
+    def list_vectors(self, user_id: str, subject: str = "", limit: int = 10) -> List[StoredTagVector]: ...
+
+
 class RecommendationService:
-    def __init__(self, content: ContentProvider, statistics: StatisticProvider) -> None:
+    def __init__(
+        self, content: ContentProvider, statistics: StatisticProvider, repository: RecommendationRepository
+    ) -> None:
         self._content = content
         self._statistics = statistics
+        self._repository = repository
 
     def build_workbook(self, request: RecommendationRequest) -> RecommendationResponse:
         if not request.user_id:
@@ -49,6 +61,10 @@ class RecommendationService:
         calibration = {}
         if request.course_id:
             calibration = self._statistics.get_course_calibration(request.course_id)
+        subject = request.subject.strip() or "math"
+        subject_profile = self._repository.get_subject_profile(subject)
+        if not subject_profile:
+            subject_profile = self._bootstrap_subject_profile(subject, tags)
 
         topic_titles = {str(item.get("id", "")): str(item.get("title", "")).strip() for item in topics}
         tag_meta = {
@@ -60,7 +76,9 @@ class RecommendationService:
             for item in tags
         }
 
-        weak_tags = self._build_weak_tag_vector(profile.get("tags", {}), tag_meta, request.max_tag_vector_size)
+        weak_tags = self._build_weak_tag_vector(
+            profile.get("tags", {}), tag_meta, subject_profile, request.max_tag_vector_size
+        )
         topic_weakness = self._build_topic_weakness(profile.get("topics", {}))
         weak_tag_map = {item.tag_id: item.score for item in weak_tags}
         calibration_map = calibration.get("task_calibrations", {}) if isinstance(calibration, dict) else {}
@@ -68,6 +86,16 @@ class RecommendationService:
         ranked = self._rank_tasks(tasks, weak_tag_map, topic_weakness, calibration_map)
         selected = self._select_tasks(ranked, request.max_tasks)
         selected_theory = self._select_theory(theory, selected, calibration_map, request.max_theory_items)
+        self._repository.store_vector(
+            StoredTagVector(
+                user_id=request.user_id,
+                subject=subject,
+                course_id=request.course_id,
+                generated_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+                weak_tags=weak_tags,
+                topic_weakness=topic_weakness,
+            )
+        )
         workbook = self._build_workbook_payload(
             request=request,
             topic_titles=topic_titles,
@@ -77,6 +105,7 @@ class RecommendationService:
         return RecommendationResponse(
             user_id=request.user_id,
             course_id=request.course_id,
+            subject=subject,
             generated_at=dt.datetime.now(dt.timezone.utc).isoformat(),
             weak_tags=weak_tags,
             selected_tasks=selected,
@@ -84,24 +113,64 @@ class RecommendationService:
             workbook=workbook,
         )
 
+    def get_subject_tags(self, subject: str) -> List[SubjectTagValue]:
+        if not subject.strip():
+            raise ValueError("subject is required")
+        return self._repository.get_subject_profile(subject.strip())
+
+    def update_subject_tags(self, subject: str, tags: Sequence[dict]) -> List[SubjectTagValue]:
+        if not subject.strip():
+            raise ValueError("subject is required")
+        values: List[SubjectTagValue] = []
+        for item in tags:
+            tag_id = str(item.get("tag_id", "")).strip()
+            if not tag_id:
+                raise ValueError("tag_id is required")
+            values.append(
+                SubjectTagValue(
+                    tag_id=tag_id,
+                    code=str(item.get("code", "")).strip(),
+                    name=str(item.get("name", "")).strip(),
+                    kind=str(item.get("kind", "")).strip(),
+                    prior_weight=max(0.0, _to_float(item.get("prior_weight", 1.0)) or 1.0),
+                    aliases=[str(value).strip() for value in item.get("aliases", []) if str(value).strip()],
+                    related_topics=[
+                        str(value).strip() for value in item.get("related_topics", []) if str(value).strip()
+                    ],
+                )
+            )
+        self._repository.upsert_subject_profile(subject.strip(), values)
+        return values
+
+    def list_user_vectors(self, user_id: str, subject: str = "", limit: int = 10) -> List[StoredTagVector]:
+        if not user_id.strip():
+            raise ValueError("user_id is required")
+        return self._repository.list_vectors(user_id.strip(), subject.strip(), limit=max(1, limit))
+
     def _build_weak_tag_vector(
-        self, profile_tags: dict, tag_meta: dict, limit: int
+        self, profile_tags: dict, tag_meta: dict, subject_profile: Sequence[SubjectTagValue], limit: int
     ) -> List[TagVectorEntry]:
+        subject_meta = {item.tag_id: item for item in subject_profile}
         items: List[TagVectorEntry] = []
         for tag_id, raw in profile_tags.items():
             mastery = _to_float(raw.get("mastery", 0.0))
             weighted_attempts = _to_float(raw.get("weighted_attempts", 0.0))
             confidence = min(1.0, weighted_attempts / 3.0)
-            score = round(max(0.0, 1.0 - mastery) * (0.4 + 0.6 * confidence), 4)
+            prior = max(
+                0.1,
+                subject_meta.get(tag_id, SubjectTagValue(tag_id, "", "", "", 1.0, [], [])).prior_weight,
+            )
+            score = round(max(0.0, 1.0 - mastery) * (0.4 + 0.6 * confidence) * prior, 4)
             if score <= 0:
                 continue
             meta = tag_meta.get(tag_id, {})
+            subject_item = subject_meta.get(tag_id)
             items.append(
                 TagVectorEntry(
                     tag_id=tag_id,
-                    code=str(raw.get("code") or meta.get("code") or ""),
-                    name=str(raw.get("name") or meta.get("name") or tag_id),
-                    kind=str(raw.get("kind") or meta.get("kind") or ""),
+                    code=str(raw.get("code") or meta.get("code") or (subject_item.code if subject_item else "") or ""),
+                    name=str(raw.get("name") or meta.get("name") or (subject_item.name if subject_item else "") or tag_id),
+                    kind=str(raw.get("kind") or meta.get("kind") or (subject_item.kind if subject_item else "") or ""),
                     mastery=round(mastery, 4),
                     weighted_attempts=round(weighted_attempts, 4),
                     score=score,
@@ -109,6 +178,23 @@ class RecommendationService:
             )
         items.sort(key=lambda item: (-item.score, item.tag_id))
         return items[:limit]
+
+    def _bootstrap_subject_profile(self, subject: str, tags: Sequence[dict]) -> List[SubjectTagValue]:
+        profile = [
+            SubjectTagValue(
+                tag_id=str(item.get("id", "")).strip(),
+                code=str(item.get("code", "")).strip(),
+                name=str(item.get("name", "")).strip(),
+                kind=str(item.get("kind", "")).strip(),
+                prior_weight=1.0,
+                aliases=[],
+                related_topics=[],
+            )
+            for item in tags
+            if str(item.get("id", "")).strip()
+        ]
+        self._repository.upsert_subject_profile(subject, profile)
+        return profile
 
     def _build_topic_weakness(self, profile_topics: dict) -> Dict[str, float]:
         result: Dict[str, float] = {}
