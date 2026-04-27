@@ -8,9 +8,10 @@
 - внутреннее синхронное взаимодействие: gRPC
 - внутреннее асинхронное взаимодействие: Kafka
 - хранение данных: PostgreSQL
+- модель рекомендателя: MongoDB
 - service discovery: Consul
 
-Рекомендательный сервис пока не реализован. Прохождение линейное, но модель контента и статистики уже подготовлена под будущую адаптивность.
+Рекомендательный сервис реализован как отдельный Python-сервис. Он строит рабочую тетрадь по статистике пользователя, вектору слабых тэгов и близости задач к этому вектору.
 
 ## Структура репозитория
 
@@ -40,6 +41,7 @@
 - `course-service` — курсы, участники, назначения, сдачи, проверки
 - `document-service` — сборка LaTeX-документов, хранение job-ов
 - `statistic-service` — попытки, агрегаты по темам и тэгам
+- `recommendation-service` — сборка персонализированных рабочих тетрадей по статистике, предметным priors тэгов и контенту
 - `gateway` — внешний HTTP reverse proxy на nginx
 
 ## Синхронные и асинхронные взаимодействия
@@ -53,6 +55,7 @@
 - `http://localhost:8080/courses...`
 - `http://localhost:8080/documents...`
 - `http://localhost:8080/statistics...`
+- `http://localhost:8080/recommendations...`
 
 ### gRPC
 
@@ -67,6 +70,8 @@
 Используется для интеграции Python AI-сервиса:
 
 - `content-service -> ai-evaluator-service`
+- `recommendation-service -> content-service`
+- `recommendation-service -> statistic-service`
 
 ### Kafka
 
@@ -96,9 +101,11 @@ docker compose -f compose/docker-compose.yml up --build
 Поднимаются:
 
 - PostgreSQL
+- MongoDB
 - Redpanda
 - Consul
 - Python `ai-evaluator-service`
+- Python `recommendation-service`
 - все Go-сервисы
 - nginx gateway
 
@@ -112,6 +119,7 @@ docker compose -f compose/docker-compose.yml up --build
 - `document-service`: HTTP `8084`, gRPC `9084`
 - `statistic-service`: HTTP `8085`, gRPC `9085`
 - `ai-evaluator-service`: HTTP `8090`
+- `recommendation-service`: HTTP `8091`
 - `gateway`: `8080`
 - `consul`: `8500`
 
@@ -538,6 +546,62 @@ Response содержит два агрегата:
 - `topic_weights`
 - `tag_weights`
 
+### Recommendations
+
+#### `POST /recommendations/workbooks`
+
+Собирает персонализированную рабочую тетрадь.
+
+```json
+{
+  "user_id": "usr_student",
+  "subject": "math",
+  "course_id": "crs_algebra",
+  "max_tasks": 5,
+  "max_theory_items": 2,
+  "max_tag_vector_size": 8,
+  "title": "Персональная тетрадь по квадратным уравнениям"
+}
+```
+
+Response содержит:
+
+- `weak_tags` — вектор слабых тэгов пользователя
+- `selected_tasks`
+- `selected_theory`
+- `workbook.items`
+- `workbook.latex`
+
+Теория подбирается по темам выбранных задач и ставится перед связанными задачами в тетради.
+
+#### `GET /recommendations/subjects/{subject}/tags`
+
+Возвращает предметный профиль тэгов для рекомендателя.
+
+#### `PUT /recommendations/subjects/{subject}/tags`
+
+Обновляет предметные priors тэгов.
+
+```json
+{
+  "tags": [
+    {
+      "tag_id": "tag_disc",
+      "code": "disc",
+      "name": "Дискриминант",
+      "kind": "skill",
+      "prior_weight": 1.6,
+      "aliases": ["дискриминант"],
+      "related_topics": ["top_quad"]
+    }
+  ]
+}
+```
+
+#### `GET /recommendations/users/{id}/vectors?subject=math&limit=10`
+
+Возвращает последние сохраненные векторы слабых тэгов пользователя по предмету.
+
 ## Как считается статистика
 
 ### Topic
@@ -589,6 +653,22 @@ Response содержит два агрегата:
 - если задачу решают хуже среднего по курсу, рекомендованная сложность растет
 - если задачу стабильно решают студенты с высоким рейтингом по теме, вес этой темы внутри задачи растет
 - аналогично пересчитываются веса тэгов
+
+## Как работает recommendation-service
+
+1. `recommendation-service` запрашивает у `statistic-service` профиль знаний пользователя.
+2. Из mastery по тэгам и rating по темам строится вектор слабых мест.
+3. Предметные priors тэгов берутся из MongoDB.
+4. `recommendation-service` запрашивает задачи и теорию у `content-service`.
+5. Задачи ранжируются по:
+   - близости к вектору слабых тэгов
+   - слабости соответствующих тем
+   - относительной сложности из `course calibration`
+6. После выбора задач сервис подбирает теорию по темам этих задач.
+7. На выходе строится готовая рабочая тетрадь и LaTeX-документ.
+
+Предметные значения тэгов не хранятся в `content-service` и `statistic-service`.
+Они живут в MongoDB у `recommendation-service`, потому что это уже не канонический контент и не фактическая статистика, а изменяемая модель рекомендаций.
 
 ## Схема БД
 
@@ -658,6 +738,49 @@ Response содержит два агрегата:
   - `title`
   - `task_ids`
   - `items_json`
+
+### statistic-service
+
+- `attempts`
+  - `id`
+  - `user_id`
+  - `course_id`
+  - `content_id`
+  - `topic_ids`
+  - `tag_scores`
+  - `difficulty`
+  - `answer`
+  - `is_correct`
+  - `source`
+  - `created_at`
+
+### recommendation-service (MongoDB)
+
+- `subject_tag_profiles`
+  - `subject`
+  - `tags[]`
+    - `tag_id`
+    - `code`
+    - `name`
+    - `kind`
+    - `prior_weight`
+    - `aliases[]`
+    - `related_topics[]`
+
+- `tag_vectors`
+  - `user_id`
+  - `subject`
+  - `course_id`
+  - `generated_at`
+  - `weak_tags[]`
+    - `tag_id`
+    - `code`
+    - `name`
+    - `kind`
+    - `mastery`
+    - `weighted_attempts`
+    - `score`
+  - `topic_weakness`
   - `status`
   - `created_by`
   - `created_at`
