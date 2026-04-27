@@ -48,6 +48,15 @@ services:
       timeout: 5s
       retries: 10
 
+  mongo:
+    image: mongo:7
+    command: ["mongod", "--bind_ip_all"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
   auth-service:
     build:
       context: ..
@@ -110,6 +119,29 @@ services:
     depends_on:
       consul:
         condition: service_started
+
+  recommendation-service:
+    build:
+      context: ../recommendation-service
+    environment:
+      ADDR: :8091
+      PORT: 8091
+      SERVICE_HOST: recommendation-service
+      SERVICE_NAME: recommendation-service
+      CONSUL_URL: http://consul:8500
+      CONTENT_SERVICE_URL: http://content-service:8082
+      STATISTIC_SERVICE_URL: http://statistic-service:8085
+      MONGO_URL: mongodb://mongo:27017
+      MONGO_DB: itmo_lms_recommendation
+    depends_on:
+      consul:
+        condition: service_started
+      content-service:
+        condition: service_started
+      statistic-service:
+        condition: service_started
+      mongo:
+        condition: service_healthy
 
   course-service:
     build:
@@ -196,6 +228,8 @@ services:
       document-service:
         condition: service_started
       statistic-service:
+        condition: service_started
+      recommendation-service:
         condition: service_started
 
 volumes:
