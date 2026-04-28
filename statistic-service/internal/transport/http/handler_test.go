@@ -128,6 +128,34 @@ func TestCourseCalibrationEndpointReturnsPayload(t *testing.T) {
 	}
 }
 
+func TestInternalAttemptsEndpointReturnsAttemptsWithoutAuth(t *testing.T) {
+	repo := &handlerRepo{
+		attempts: []domain.Attempt{
+			{ID: "att_1", UserID: "usr_1", ContentID: "tsk_1", Difficulty: 3, IsCorrect: true},
+		},
+	}
+	service := application.NewService(repo, nil, nil, 0)
+	handler := New(service, "test-secret")
+	server := httptest.NewServer(handler.Routes())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/internal/users/usr_1/attempts")
+	if err != nil {
+		t.Fatalf("get request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var decoded []domain.Attempt
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		t.Fatalf("decode attempts: %v", err)
+	}
+	if len(decoded) != 1 || decoded[0].ID != "att_1" {
+		t.Fatalf("decoded attempts = %+v", decoded)
+	}
+}
+
 func mustStatToken(t *testing.T, secret, sub string, roles []string) string {
 	t.Helper()
 	token, err := platform.SignToken(secret, platform.Claims{Subject: sub, Roles: roles, Expires: time.Now().Add(time.Hour).Unix()})
