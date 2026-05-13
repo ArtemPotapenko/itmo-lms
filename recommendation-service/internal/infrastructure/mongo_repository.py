@@ -4,7 +4,7 @@ from typing import List
 
 from pymongo import ASCENDING, DESCENDING, MongoClient
 
-from ..domain.models import StoredTagVector, SubjectTagValue, TagVectorEntry
+from ..domain.models import RecommendationVectorEntry, StoredTagVector, SubjectTagValue, TagVectorEntry
 
 
 class MongoRecommendationRepository:
@@ -37,6 +37,7 @@ class MongoRecommendationRepository:
                 "course_id": vector.course_id,
                 "generated_at": vector.generated_at,
                 "weak_tags": [_encode_tag_vector_entry(item) for item in vector.weak_tags],
+                "recommendation_vector": [_encode_recommendation_vector_entry(item) for item in vector.recommendation_vector],
                 "topic_weakness": vector.topic_weakness,
             }
         )
@@ -103,5 +104,37 @@ def _decode_stored_vector(item: dict) -> StoredTagVector:
             )
             for tag in item.get("weak_tags", [])
         ],
+        recommendation_vector=[
+            RecommendationVectorEntry(
+                tag_id=str(tag.get("tag_id", "")).strip(),
+                code=str(tag.get("code", "")).strip(),
+                name=str(tag.get("name", "")).strip(),
+                kind=str(tag.get("kind", "")).strip(),
+                mastery_gap=float(tag.get("mastery_gap", 0.0) or 0.0),
+                recent_error_rate=float(tag.get("recent_error_rate", 0.0) or 0.0),
+                recency_factor=float(tag.get("recency_factor", 0.0) or 0.0),
+                practice_gap=float(tag.get("practice_gap", 0.0) or 0.0),
+                trend_penalty=float(tag.get("trend_penalty", 0.0) or 0.0),
+                prior_weight=float(tag.get("prior_weight", 1.0) or 1.0),
+                score=float(tag.get("score", 0.0) or 0.0),
+            )
+            for tag in item.get("recommendation_vector", [])
+        ],
         topic_weakness={str(key): float(value or 0.0) for key, value in item.get("topic_weakness", {}).items()},
     )
+
+
+def _encode_recommendation_vector_entry(item: RecommendationVectorEntry) -> dict:
+    return {
+        "tag_id": item.tag_id,
+        "code": item.code,
+        "name": item.name,
+        "kind": item.kind,
+        "mastery_gap": item.mastery_gap,
+        "recent_error_rate": item.recent_error_rate,
+        "recency_factor": item.recency_factor,
+        "practice_gap": item.practice_gap,
+        "trend_penalty": item.trend_penalty,
+        "prior_weight": item.prior_weight,
+        "score": item.score,
+    }

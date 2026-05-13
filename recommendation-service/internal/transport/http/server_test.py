@@ -35,6 +35,7 @@ class HTTPServerTest(unittest.TestCase):
 
         self.assertEqual("usr_1", body["user_id"])
         self.assertEqual("Рекомендованная рабочая тетрадь: Квадратные уравнения", body["workbook"]["title"])
+        self.assertIn("recommendation_vector", body)
         self.assertGreaterEqual(len(body["selected_tasks"]), 1)
 
     def test_subject_tag_endpoints_roundtrip(self) -> None:

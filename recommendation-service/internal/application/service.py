@@ -6,6 +6,7 @@ from collections import defaultdict
 from typing import Dict, List, Protocol, Sequence, Tuple
 
 from ..domain.models import (
+    RecommendationVectorEntry,
     RecommendationRequest,
     RecommendationResponse,
     RecommendedTask,
@@ -27,6 +28,7 @@ class ContentProvider(Protocol):
 
 class StatisticProvider(Protocol):
     def get_profile(self, user_id: str) -> dict: ...
+    def get_attempts(self, user_id: str) -> List[dict]: ...
     def get_course_calibration(self, course_id: str) -> dict: ...
 
 
@@ -58,6 +60,7 @@ class RecommendationService:
         tasks = self._content.list_tasks()
         theory = self._content.list_theory()
         profile = self._statistics.get_profile(request.user_id)
+        attempts = self._statistics.get_attempts(request.user_id)
         calibration = {}
         if request.course_id:
             calibration = self._statistics.get_course_calibration(request.course_id)
@@ -79,8 +82,15 @@ class RecommendationService:
         weak_tags = self._build_weak_tag_vector(
             profile.get("tags", {}), tag_meta, subject_profile, request.max_tag_vector_size
         )
+        recommendation_vector = self._build_recommendation_vector(
+            profile.get("tags", {}),
+            attempts,
+            tag_meta,
+            subject_profile,
+            request.max_tag_vector_size,
+        )
         topic_weakness = self._build_topic_weakness(profile.get("topics", {}))
-        weak_tag_map = {item.tag_id: item.score for item in weak_tags}
+        weak_tag_map = {item.tag_id: item.score for item in recommendation_vector}
         calibration_map = calibration.get("task_calibrations", {}) if isinstance(calibration, dict) else {}
 
         ranked = self._rank_tasks(tasks, weak_tag_map, topic_weakness, calibration_map)
@@ -93,6 +103,7 @@ class RecommendationService:
                 course_id=request.course_id,
                 generated_at=dt.datetime.now(dt.timezone.utc).isoformat(),
                 weak_tags=weak_tags,
+                recommendation_vector=recommendation_vector,
                 topic_weakness=topic_weakness,
             )
         )
@@ -108,6 +119,7 @@ class RecommendationService:
             subject=subject,
             generated_at=dt.datetime.now(dt.timezone.utc).isoformat(),
             weak_tags=weak_tags,
+            recommendation_vector=recommendation_vector,
             selected_tasks=selected,
             selected_theory=selected_theory,
             workbook=workbook,
@@ -178,6 +190,105 @@ class RecommendationService:
             )
         items.sort(key=lambda item: (-item.score, item.tag_id))
         return items[:limit]
+
+    def _build_recommendation_vector(
+        self,
+        profile_tags: dict,
+        attempts: Sequence[dict],
+        tag_meta: dict,
+        subject_profile: Sequence[SubjectTagValue],
+        limit: int,
+    ) -> List[RecommendationVectorEntry]:
+        subject_meta = {item.tag_id: item for item in subject_profile}
+        attempt_stats = self._attempt_stats_by_tag(attempts)
+        now = dt.datetime.now(dt.timezone.utc)
+        items: List[RecommendationVectorEntry] = []
+        for tag_id, raw in profile_tags.items():
+            meta = tag_meta.get(tag_id, {})
+            subject_item = subject_meta.get(tag_id)
+            mastery = _to_float(raw.get("mastery", 0.0))
+            mastery_gap = max(0.0, 1.0 - mastery)
+            prior_weight = max(0.1, (subject_item.prior_weight if subject_item else 1.0))
+            tag_attempts = attempt_stats.get(tag_id, {})
+            last_attempt_at = _parse_time(str(tag_attempts.get("last_attempt_at", "")))
+            days_since_last = 365.0 if last_attempt_at is None else max(0.0, (now - last_attempt_at).total_seconds() / 86400.0)
+            recency_factor = min(1.0, days_since_last / 30.0)
+            recent_total = _to_float(tag_attempts.get("recent_total", 0.0))
+            recent_wrong = _to_float(tag_attempts.get("recent_wrong", 0.0))
+            recent_error_rate = 0.5 if recent_total == 0 else min(1.0, recent_wrong / recent_total)
+            practice_gap = max(0.0, 1.0 - min(1.0, _to_float(tag_attempts.get("attempt_count", 0.0)) / 5.0))
+            recent_success = _to_float(tag_attempts.get("recent_success_rate", mastery))
+            trend_penalty = max(0.0, mastery - recent_success)
+            score = round(
+                prior_weight
+                * (
+                    0.35 * mastery_gap
+                    + 0.25 * recent_error_rate
+                    + 0.20 * recency_factor
+                    + 0.15 * practice_gap
+                    + 0.05 * trend_penalty
+                ),
+                4,
+            )
+            if score <= 0:
+                continue
+            items.append(
+                RecommendationVectorEntry(
+                    tag_id=tag_id,
+                    code=str(raw.get("code") or meta.get("code") or (subject_item.code if subject_item else "") or ""),
+                    name=str(raw.get("name") or meta.get("name") or (subject_item.name if subject_item else "") or tag_id),
+                    kind=str(raw.get("kind") or meta.get("kind") or (subject_item.kind if subject_item else "") or ""),
+                    mastery_gap=round(mastery_gap, 4),
+                    recent_error_rate=round(recent_error_rate, 4),
+                    recency_factor=round(recency_factor, 4),
+                    practice_gap=round(practice_gap, 4),
+                    trend_penalty=round(trend_penalty, 4),
+                    prior_weight=round(prior_weight, 4),
+                    score=score,
+                )
+            )
+        items.sort(key=lambda item: (-item.score, item.tag_id))
+        return items[:limit]
+
+    def _attempt_stats_by_tag(self, attempts: Sequence[dict]) -> Dict[str, dict]:
+        by_tag: Dict[str, dict] = {}
+        cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=21)
+        for attempt in attempts:
+            created_at = _parse_time(str(attempt.get("created_at", "")))
+            is_recent = created_at is not None and created_at >= cutoff
+            is_correct = bool(attempt.get("is_correct", False))
+            for tag in attempt.get("tag_scores", []) or []:
+                tag_id = str(tag.get("tag_id", "")).strip()
+                if not tag_id:
+                    continue
+                item = by_tag.setdefault(
+                    tag_id,
+                    {
+                        "attempt_count": 0.0,
+                        "last_attempt_at": "",
+                        "recent_total": 0.0,
+                        "recent_wrong": 0.0,
+                        "recent_correct": 0.0,
+                    },
+                )
+                item["attempt_count"] += 1.0
+                if created_at is not None:
+                    previous = _parse_time(str(item["last_attempt_at"]))
+                    if previous is None or created_at > previous:
+                        item["last_attempt_at"] = created_at.isoformat()
+                if is_recent:
+                    item["recent_total"] += 1.0
+                    if is_correct:
+                        item["recent_correct"] += 1.0
+                    else:
+                        item["recent_wrong"] += 1.0
+        for item in by_tag.values():
+            recent_total = _to_float(item.get("recent_total", 0.0))
+            if recent_total > 0:
+                item["recent_success_rate"] = _to_float(item.get("recent_correct", 0.0)) / recent_total
+            else:
+                item["recent_success_rate"] = 0.0
+        return by_tag
 
     def _bootstrap_subject_profile(self, subject: str, tags: Sequence[dict]) -> List[SubjectTagValue]:
         profile = [
@@ -502,6 +613,19 @@ def _to_float(value: object) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _parse_time(value: str) -> dt.datetime | None:
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
 
 
 def _escape_latex(value: str) -> str:

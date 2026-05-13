@@ -15,6 +15,9 @@ class StatisticClient:
     def get_profile(self, user_id: str) -> Dict[str, object]:
         return self._get_json(f"/internal/users/{user_id}/knowledge-profile")
 
+    def get_attempts(self, user_id: str) -> list[dict]:
+        return self._get_json_list(f"/internal/users/{user_id}/attempts")
+
     def get_course_calibration(self, course_id: str) -> Dict[str, object]:
         return self._get_json(f"/internal/courses/{course_id}/calibration")
 
@@ -24,5 +27,14 @@ class StatisticClient:
         with self._opener.open(request, timeout=self._timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
         if not isinstance(payload, dict):
+            raise ValueError(f"unexpected statistic response for {path}")
+        return payload
+
+    def _get_json_list(self, path: str) -> list[dict]:
+        url = urllib.parse.urljoin(self._base_url + "/", path.lstrip("/"))
+        request = urllib.request.Request(url=url, method="GET")
+        with self._opener.open(request, timeout=self._timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, list):
             raise ValueError(f"unexpected statistic response for {path}")
         return payload

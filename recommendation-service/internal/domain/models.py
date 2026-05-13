@@ -27,6 +27,21 @@ class TagVectorEntry:
 
 
 @dataclass(slots=True)
+class RecommendationVectorEntry:
+    tag_id: str
+    code: str
+    name: str
+    kind: str
+    mastery_gap: float
+    recent_error_rate: float
+    recency_factor: float
+    practice_gap: float
+    trend_penalty: float
+    prior_weight: float
+    score: float
+
+
+@dataclass(slots=True)
 class SubjectTagValue:
     tag_id: str
     code: str
@@ -44,6 +59,7 @@ class StoredTagVector:
     course_id: str
     generated_at: str
     weak_tags: List[TagVectorEntry]
+    recommendation_vector: List[RecommendationVectorEntry]
     topic_weakness: Dict[str, float]
 
 
@@ -93,6 +109,7 @@ class RecommendationResponse:
     subject: str
     generated_at: str
     weak_tags: List[TagVectorEntry]
+    recommendation_vector: List[RecommendationVectorEntry]
     selected_tasks: List[RecommendedTask]
     selected_theory: List[RecommendedTheory]
     workbook: RecommendedWorkbook

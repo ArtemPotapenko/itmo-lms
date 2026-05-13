@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import unittest
 
 from internal.application.service import RecommendationService
@@ -95,6 +96,35 @@ class FakeStatistics:
             },
         }
 
+    def get_attempts(self, user_id: str) -> list[dict]:
+        now = dt.datetime.now(dt.timezone.utc)
+        return [
+            {
+                "id": "att_recent_fail",
+                "user_id": user_id,
+                "content_id": "tsk_3",
+                "tag_scores": [{"tag_id": "tag_disc", "weight": 0.5}, {"tag_id": "tag_roots", "weight": 0.5}],
+                "is_correct": False,
+                "created_at": (now - dt.timedelta(days=2)).isoformat(),
+            },
+            {
+                "id": "att_old_ok",
+                "user_id": user_id,
+                "content_id": "tsk_1",
+                "tag_scores": [{"tag_id": "tag_disc", "weight": 0.7}],
+                "is_correct": True,
+                "created_at": (now - dt.timedelta(days=40)).isoformat(),
+            },
+            {
+                "id": "att_linear_ok",
+                "user_id": user_id,
+                "content_id": "tsk_2",
+                "tag_scores": [{"tag_id": "tag_linear", "weight": 1.0}],
+                "is_correct": True,
+                "created_at": (now - dt.timedelta(days=1)).isoformat(),
+            },
+        ]
+
 
 class RecommendationServiceTest(unittest.TestCase):
     def test_build_workbook_prefers_tasks_close_to_weak_tags(self) -> None:
@@ -122,7 +152,28 @@ class RecommendationServiceTest(unittest.TestCase):
         self.assertEqual("task", result.workbook.items[1].kind)
         self.assertIn("Дискриминант", result.workbook.latex)
         self.assertGreater(result.weak_tags[0].score, result.weak_tags[-1].score)
+        self.assertEqual("tag_disc", result.recommendation_vector[0].tag_id)
+        self.assertGreater(result.recommendation_vector[0].recent_error_rate, 0.0)
         self.assertEqual(1, len(repository.list_vectors("usr_1", "math", 10)))
+
+    def test_recommendation_vector_differs_from_plain_profile_weakness(self) -> None:
+        repository = InMemoryRecommendationRepository()
+        repository.upsert_subject_profile(
+            "math",
+            [
+                SubjectTagValue("tag_disc", "disc", "Дискриминант", "skill", 1.0, [], ["top_quad"]),
+                SubjectTagValue("tag_roots", "roots", "Корни", "skill", 1.0, [], ["top_quad"]),
+                SubjectTagValue("tag_linear", "linear", "Линейные", "skill", 1.0, [], ["top_lin"]),
+            ],
+        )
+        service = RecommendationService(FakeContent(), FakeStatistics(), repository)
+
+        result = service.build_workbook(RecommendationRequest(user_id="usr_1", subject="math", max_tasks=2))
+
+        weak = {item.tag_id: item.score for item in result.weak_tags}
+        rec = {item.tag_id: item.score for item in result.recommendation_vector}
+        self.assertNotEqual(round(weak["tag_roots"], 4), round(rec["tag_roots"], 4))
+        self.assertGreater(rec["tag_roots"], weak["tag_roots"])
 
     def test_build_workbook_requires_user_id(self) -> None:
         service = RecommendationService(FakeContent(), FakeStatistics(), InMemoryRecommendationRepository())
